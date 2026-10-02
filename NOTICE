@@ -1,0 +1,28 @@
+Preset Switch Plus — 版权与来源说明
+=====================================
+
+本插件是以下开源项目的修改版本：
+
+    原项目：comfyui_workflow_preset_switch
+    原作者：CarlMarkswx
+    原仓库：https://github.com/CarlMarkswx/comfyui_workflow_preset_switch
+    原版本：0.1.0
+    原许可：GNU General Public License v3.0 (GPL-3.0)
+
+根据 GPL-3.0 的要求，本修改版本：
+
+  1. 继续以 GPL-3.0 授权发布，完整许可文本见同目录 LICENSE 文件；
+  2. 在此声明本版本经过了修改，修改内容详见 CHANGELOG.md；
+  3. 保留原作者的版权声明。
+
+主要修改内容（0.2.0）：
+
+  - 在预设快照中新增 `widgets` 字段，记录节点 widget 的参数值；
+  - 切换预设时一并还原 widget 参数值；
+  - 跳过不应记录的 widget（preset_index、前端动态按钮、函数型 widget）；
+  - 单个 widget 还原失败时容错处理，不影响其他节点；
+  - 存档结构版本号由 1 升至 2；
+  - 节点分类改为 `Preset/Plus`，并补充节点说明与文档。
+
+原项目版权归 CarlMarkswx 所有。
+本修改版本的修改部分版权归本仓库作者所有，同样以 GPL-3.0 授权。

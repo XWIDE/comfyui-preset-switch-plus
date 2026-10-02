@@ -1,0 +1,12 @@
+# 让仓库里的换行符统一成 LF，不管谁在什么系统上提交。
+# 不加这个的话，Windows 上默认的 core.autocrlf 会把整份文件的换行符改掉，
+# 别人看到的 diff 就是"整个文件都变了"，根本没法审。
+* text=auto eol=lf
+
+# 二进制文件别动
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.zip binary

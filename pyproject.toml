@@ -1,0 +1,21 @@
+[project]
+name = "preset-switch-plus"
+version = "0.12.19"
+description = "Save and switch whole-workflow states: node bypass/mode AND widget parameter values, in one click."
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "X-WIDE" }]
+keywords = ["comfyui", "preset", "workflow", "switch", "bypass", "widget"]
+
+[project.urls]
+Repository = "https://github.com/XWIDE/comfyui-preset-switch-plus"
+"Bug Tracker" = "https://github.com/XWIDE/comfyui-preset-switch-plus/issues"
+Documentation = "https://github.com/XWIDE/comfyui-preset-switch-plus/blob/main/README.md"
+
+[tool.comfy]
+# 发布到 Comfy Registry 时用（https://registry.comfy.org）
+PublisherId = "xwide"
+DisplayName = "Preset Switch Plus"
+Icon = ""
+includes = []

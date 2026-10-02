@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>X-WIDE Preset Switch Plus —— 帮助文档</title>
+<style>
+  :root {
+    --bg: #1b1e24;
+    --panel: #23272f;
+    --line: #343a44;
+    --fg: #dfe3ea;
+    --dim: #969ca6;
+    --accent: #7fb2ff;
+    --warn: #d9a441;
+    --danger: #e06c66;
+    --ok: #6fbf85;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 34px 60px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    overflow-wrap: anywhere;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 24px;
+    letter-spacing: 0.5px;
+  }
+  .sub { color: var(--dim); margin-bottom: 26px; font-size: 13px; }
+  h2 {
+    margin: 34px 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--line);
+    font-size: 18px;
+    color: var(--accent);
+  }
+  h3 { margin: 20px 0 6px; font-size: 15px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+  code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #2e333c;
+    color: #ffd479;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.94em;
+  }
+  kbd {
+    display: inline-block;
+    padding: 1px 7px;
+    border: 1px solid #555c68;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: #2b3038;
+    font-family: inherit;
+    font-size: 0.92em;
+    white-space: nowrap;
+  }
+  table {
+    width: 100%;
+    margin: 12px 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #2a2f38; color: #cfd4da; font-weight: 600; }
+  .box {
+    margin: 14px 0;
+    padding: 12px 16px;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    background: var(--panel);
+  }
+  .box.warn { border-left-color: var(--warn); }
+  .box.danger { border-left-color: var(--danger); }
+  .box.ok { border-left-color: var(--ok); }
+  .box .t { font-weight: 700; margin-bottom: 4px; }
+  .toc {
+    padding: 14px 18px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ol { margin: 6px 0 0; }
+  .muted { color: var(--dim); }
+  .tag {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: #2f6b3f;
+    color: #d8f5e0;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .tag.red { background: #6e2626; color: #ffd7d7; }
+  .tag.yellow { background: #8a6a1f; color: #fff0c2; }
+  footer {
+    margin-top: 44px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--dim);
+    font-size: 13px;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>X-WIDE Preset Switch Plus</h1>
+<div class="sub">帮助文档 · 基于 CarlMarkswx 的 <code>comfyui_workflow_preset_switch</code> 升级 · GPL-3.0</div>
+
+<div class="toc">
+  <b>目录</b>
+  <ol>
+    <li><a href="#most-important">最重要的一件事：预设记录的是「全部状态」</a></li>
+    <li><a href="#exclude">排除记录：让某些节点不被预设碰</a></li>
+    <li><a href="#quickstart">快速上手</a></li>
+    <li><a href="#panel">节点面板怎么看</a></li>
+    <li><a href="#submode">子模式</a></li>
+    <li><a href="#hotkey">快捷键</a></li>
+    <li><a href="#untracked">未记录节点策略（旁路）</a></li>
+    <li><a href="#missing">缺失节点红点</a></li>
+    <li><a href="#faq">常见问题</a></li>
+    <li><a href="#storage">数据存在哪里</a></li>
+  </ol>
+</div>
+
+<h2 id="most-important">1. 最重要的一件事：预设记录的是「全部状态」</h2>
+
+<div class="box danger">
+  <div class="t">⚠ 请先读这一段</div>
+  <p>
+    点「记录当前」的时候，插件会把<b>画布上每一个节点</b>的当前状态原样记下来 ——
+    <b>不只是提示词和参数</b>，还包括：
+  </p>
+  <ul>
+    <li><b>LoadImage 里载入的图片</b>（哪一张、什么文件名）</li>
+    <li><b>模型加载器里选的模型</b>（Checkpoint、UNET、VAE、CLIP、LoRA…）</li>
+    <li><b>ControlNet / 参考图 / 遮罩</b>这类节点的输入</li>
+    <li>每一个滑块的数值、每一个下拉框的选择、每一个开关的开关状态</li>
+    <li>每个节点是<b>启用</b>、<b>跳过（旁路）</b>还是<b>停用</b></li>
+  </ul>
+  <p>
+    也就是说：<b>预设之间的切换，会把这四类东西全部换掉</b>，而不只是换提示词。
+  </p>
+</div>
+
+<h3>这会造成什么后果（真实例子）</h3>
+<p>
+  假设你有两份预设：<span class="tag">图像编辑模式</span>和<span class="tag">文生图模式</span>。
+</p>
+<ol>
+  <li>你在「图像编辑模式」下往 LoadImage 里<b>载入了 6 张图</b>。</li>
+  <li>你切到「文生图模式」—— 这份预设当初只记了 <b>1 张图</b>。</li>
+  <li>切换的瞬间，LoadImage 的图片被改回那 1 张，<b>刚才那 6 张全被顶掉了</b>。</li>
+  <li>你再切回「图像编辑模式」。如果切走前<b>没点过「记录改动」</b>，
+      它回退的是上一次保存的版本 —— 可能只有 2 张图的状态。</li>
+</ol>
+<p>
+  另外还有一条更隐蔽的机制：预设里<b>没被记录过的节点</b>，默认会被「未记录节点策略」
+  整个<i>旁路</i>掉（见第 7 节）。所以那几张图丢失，有可能是被覆盖，也有可能是
+  LoadImage 节点整个被跳过了。
+</p>
+
+<div class="box ok">
+  <div class="t">✓ 解决办法</div>
+  <p>
+    把不想让预设插手的节点<b>排除记录</b>（下一节）。排除之后它们就完全交给你手动管，
+    上面两条机制都不会再碰它们。
+  </p>
+</div>
+
+<h2 id="exclude">2. 排除记录：让某些节点不被预设碰</h2>
+
+<h3>怎么排除</h3>
+<table>
+  <tr>
+    <th style="width:34%">方法</th>
+    <th>操作</th>
+  </tr>
+  <tr>
+    <td>画布右键（最快）</td>
+    <td>选中一个或多个节点 → <b>右键</b> → <code>🚫 排除记录 / Exclude from recording</code></td>
+  </tr>
+  <tr>
+    <td>排除清单窗口</td>
+    <td>在画布空白处右键 → <code>📋 排除记录清单</code>；或打开插件的<b>设置</b>窗口 → 「排除记录」→ 打开清单</td>
+  </tr>
+</table>
+
+<p>清单窗口里每一行是一个节点，左边那个按钮就是开关：</p>
+<ul>
+  <li><span class="tag">● 记录</span> 亮着 = 这个节点<b>参与</b>预设的记录与切换</li>
+  <li><span class="tag red">○ 排除</span> = 这个节点<b>不参与</b>，点一下就能切回来</li>
+  <li>上面可以搜索（按节点名 / 类型 / 编号），也可以勾「只看被排除的」</li>
+  <li>「全部恢复记录」一次把名单清空</li>
+</ul>
+
+<h3>被排除的节点会怎样</h3>
+<table>
+  <tr><th style="width:38%">行为</th><th>被排除的节点</th></tr>
+  <tr><td>点「记录当前」时</td><td>不进快照，不会被记下来</td></tr>
+  <tr><td>切换预设时</td><td>控件值、模型、图片<b>一概不改</b></td></tr>
+  <tr><td>启用 / 跳过 / 停用状态</td><td>不碰</td></tr>
+  <tr><td>「未记录节点策略」</td><td>豁免，不会被旁路掉</td></tr>
+  <tr><td>面板的「待记录」判定</td><td>不参与 —— 它变了不会让预设变黄</td></tr>
+  <tr><td>缺失节点红点</td><td>不参与</td></tr>
+</table>
+
+<div class="box">
+  <div class="t">名单的作用范围</div>
+  <p>
+    名单是<b>整个工作流共用一份</b>，对该工作流里的<b>所有预设</b>都生效。
+    它跟着工作流一起保存，所以换台机器打开还是有效的。
+  </p>
+  <p class="muted">
+    节点编号只在这一个工作流里有意义，所以名单不会跨工作流生效 ——
+    在别的作品里要重新排一次。
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">已经记进老预设的节点怎么办</div>
+  <p>
+    排除之后，<b>老预设里原有的记录不会被删掉</b>，只是切换时跳过它们。
+    所以万一你后悔了，把排除取消，那些老记录立刻又能用。
+  </p>
+</div>
+
+<h3>建议排除哪些节点</h3>
+<ul>
+  <li><code>LoadImage</code> / <code>LoadImageMask</code> / 各种图片载入节点 —— 你举的 6 张图的例子</li>
+  <li>模型加载器：<code>CheckpointLoaderSimple</code>、<code>UNETLoader</code>、<code>VAELoader</code>、<code>LoraLoader</code>…</li>
+  <li>你自己手动切换、不希望被预设带走的任何节点</li>
+</ul>
+<p class="muted">
+  预设开关节点自己（Preset Switch）本来就不参与记录，也不会出现在清单里。
+</p>
+
+<h2 id="quickstart">3. 快速上手</h2>
+<ol>
+  <li>在画布上添加节点 <code>X-WIDE/Preset → PresetSwitch</code>。</li>
+  <li>调好一整套参数，点面板上的 <b>「＋ 新增预设」</b> —— 它会从 0 开始记一份新的。</li>
+  <li>再改改参数，点 <b>「● 记录改动 / Record Changes」</b> 覆盖掉当前这一份。</li>
+  <li>用 <b>「◀ 上一个」/「▶ 下一个」</b>，或者直接拖 <code>preset_index</code> 滑块来切换。</li>
+  <li>想再加一套完全不同的配置，再点一次「＋ 新增预设」。</li>
+</ol>
+
+<div class="box">
+  <div class="t">「新增预设」和「新增子模式」的区别</div>
+  <ul>
+    <li><b>＋ 新增预设</b>：新建一份<b>空白</b>预设，画布原样不动，等你自己调好再点「记录当前」。</li>
+    <li><b>＋ 新增子模式</b>：在当前预设下面挂一份<b>已经记好</b>的子模式，只记跟父模式不一样的地方。</li>
+  </ul>
+</div>
+
+<h2 id="panel">4. 节点面板怎么看</h2>
+<table>
+  <tr><th style="width:32%">看到的东西</th><th>意思</th></tr>
+  <tr><td>表头 <code>● 已记录 · 当前 0</code></td><td>当前这份预设的状态：<span class="tag">● 已记录</span>绿、<span class="tag yellow">● 待记录</span>黄（有改动没存）、<span class="tag red">● 未记录</span>红</td></tr>
+  <tr><td>行尾的小圆点</td><td>那一份预设的状态（和表头同一个含义，逐份显示）</td></tr>
+  <tr><td>行尾的 <code>!</code> 红标</td><td>那份预设记录过的节点里有已经不在画布上的，点它可以看清单</td></tr>
+  <tr><td>左下角的圆形开关</td><td>清爽模式开关，点一下收起 / 展开工具栏</td></tr>
+</table>
+<p>
+  面板下方那一排按钮：<b>＋ 新增预设</b>、<b>＋ 新增子模式</b>、
+  <b>记录 / 覆盖</b>（会跟着状态变色、还会呼吸）、<b>删除</b>、<b>上一个</b>、<b>下一个</b>、<b>设置</b>。
+</p>
+
+<h2 id="submode">5. 子模式</h2>
+<p>
+  子模式挂在某个主预设下面（编号像 <code>0.1</code>、<code>1.2</code>）。
+  切换到子模式时，插件会<b>先套用它的父预设，再叠加子模式自己记的差异</b>。
+</p>
+<p>
+  适合「同一套流程，只换一小部分参数」的情况 —— 父预设记大框架，子模式记那几个变量。
+</p>
+
+<h2 id="hotkey">6. 快捷键</h2>
+<table>
+  <tr><th style="width:26%">默认键</th><th>作用</th></tr>
+  <tr>
+    <td><kbd>Alt</kbd> + <kbd>X</kbd></td>
+    <td>进入 / 退出<b>清爽模式</b>（收起工具栏，只留预设列表）。可以在设置里改成「收起整个面板」。</td>
+  </tr>
+  <tr>
+    <td><kbd>Alt</kbd> + <kbd>Z</kbd></td>
+    <td>
+      <b>把预设开关节点搬到你鼠标底下</b>：鼠标停在画布哪儿，节点就调到哪儿，
+      顺手选中它、闪一下金色边框告诉你「在这儿」。
+      鼠标不在画布上时（比如停在侧边栏），退回「把画面移到节点上」。
+    </td>
+  </tr>
+</table>
+<p>两个键都能在设置窗口里改，也可以清空。设置窗口里会实时提示组合键有没有冲突。</p>
+
+<h2 id="untracked">7. 未记录节点策略（旁路）</h2>
+<p>
+  这一条容易让人困惑，但它很重要。当你切到某份预设时，画布上可能有一些节点
+  <b>从来没有被这份预设记录过</b>（比如你后来新加的）。对它们有三种处理：
+</p>
+<table>
+  <tr><th style="width:26%">策略</th><th>行为</th></tr>
+  <tr><td><b>旁路</b>（默认）</td><td>把那些节点设为「跳过」—— 执行时不算它们</td></tr>
+  <tr><td>启用</td><td>把它们设为「启用」</td></tr>
+  <tr><td>保持原样</td><td>什么都不做</td></tr>
+</table>
+<div class="box warn">
+  <div class="t">如果你的图莫名其妙丢了</div>
+  <p>
+    默认的「旁路」很可能就是原因：LoadImage 如果没被那份预设记录过，切过去时会被整个跳过。
+    把这类节点<b>排除记录</b>就能彻底避免。
+  </p>
+</div>
+
+<h2 id="missing">8. 缺失节点红点</h2>
+<p>
+  预设记录过的某个节点被删掉了，那一行的行尾会出现一个<b>红色 <code>!</code></b>。
+  点它能打开清单，看到底缺了哪几个，并选择：
+</p>
+<ul>
+  <li><b>复制清单</b> —— 把缺的节点名复制出来，方便你去装插件</li>
+  <li><b>忽略这条记录</b> —— 把缺的节点从这份预设里摘掉，红点消失</li>
+</ul>
+<p class="muted">
+  点不中那个小感叹号时，也可以<b>右键点预设开关节点</b>，菜单里会列出缺节点的预设。
+</p>
+
+<h2 id="faq">9. 常见问题</h2>
+
+<h3>右边不停弹出「保存工作流草稿失败」</h3>
+<p>
+  这是 ComfyUI 自己的提示，不是插件的弹窗 —— 它是说<b>浏览器 localStorage 写满了</b>
+  （配额约 5MB）。工作流草稿就存在那里。
+</p>
+<p>
+  本插件会把预设数据一起存进工作流，节点多、参数大的工作流很容易顶到上限。
+  从 <b>v0.12.17</b> 起已经做了两件事：
+</p>
+<ul>
+  <li><b>控件值池化</b> —— 多份预设里重复的参数值只存一份（实测省一半以上）</li>
+  <li>修掉了每 250ms 误判「布局坏了」而反复触发重排 / 自动保存的 bug</li>
+</ul>
+<p>如果你还在看到这个提示：</p>
+<ol>
+  <li>刷新页面，确认节点面板表头右下角的版本号是新版</li>
+  <li>打开工作流后按一次 <kbd>Ctrl</kbd> + <kbd>S</kbd> 存盘，让瘦身后的数据写回去</li>
+  <li>还不行就清掉本站点的 localStorage：F12 → Application → Local Storage → 删除该站点</li>
+</ol>
+
+<h3>点节点上的按钮没反应 / 界面偶尔卡一下</h3>
+<p>
+  v0.12.17 修掉了。原因是布局自检的判据把标题栏高度算漏了，导致每 250ms 误判一次
+  「控件被挤出节点」，然后清掉所有控件坐标强行重排 —— 而 ComfyUI 判断「点到了哪个控件」
+  正好依赖那份被清掉的坐标，所以那一瞬间点击会丢。升级后就好了。
+</p>
+
+<h3>我放了两个预设开关节点，第二个整个变紫了</h3>
+<p>
+  这是有意为之：<b>一个工作流只允许有一个在用的预设开关</b>。
+  第二个会被自动停用（节点上画一条暗红提示），避免两个控制器互相打架。
+  选中它按 <kbd>Delete</kbd> 删掉即可。
+</p>
+
+<h3>预设名字很长会不会显示不下</h3>
+<p>
+  不会。面板里的名字太长会用省略号截断，节点宽度也可以自己拖。
+</p>
+
+<h3>切换预设的时候，为什么有些节点变紫（被跳过）了</h3>
+<p>
+  见第 7 节的「未记录节点策略」。不想要这个行为，可以在设置里把它改成
+  「保持原样」，或者把这些节点<b>排除记录</b>。
+</p>
+
+<h2 id="storage">10. 数据存在哪里</h2>
+<table>
+  <tr><th style="width:32%">数据</th><th>位置</th></tr>
+  <tr>
+    <td>预设（记录了什么节点、什么参数）</td>
+    <td><b>工作流文件内部</b>，跟着 <code>.json</code> 一起走。换机器、发给别人都在。</td>
+  </tr>
+  <tr>
+    <td>排除记录名单</td>
+    <td>同上，也在工作流文件内部</td>
+  </tr>
+  <tr>
+    <td>快捷键、缩放范围、署名等设置</td>
+    <td><b>浏览器本地</b>，所有工作流共用</td>
+  </tr>
+</table>
+<p class="muted">
+  插件不联网、不上传任何东西，也不依赖任何第三方 Python 包。
+</p>
+
+<footer>
+  <b>X-WIDE Preset Switch Plus</b><br />
+  原始版本 <code>comfyui_workflow_preset_switch</code> 由 CarlMarkswx 开发，版权归原作者所有。<br />
+  本升级版遵循 <b>GPL-3.0</b> 继续开源。
+</footer>
+
+</body>
+</html>
