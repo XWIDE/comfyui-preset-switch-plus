@@ -10,6 +10,12 @@
 
 在节点搜索框里输入 **`xwide`** / **`x-wide`** / **`X-WIED`** / **`预设`** / **`子模式`** 都能直接搜到（已配置搜索别名）。
 
+<p align="center">
+  <img src="web/preview.png" alt="X-WIDE Preset Switch 节点面板" width="420">
+  <br>
+  <sub>节点面板：预设列表 · 红点缺节点提示 · 完整/清爽模式 · 操作按钮 · 快捷键</sub>
+</p>
+
 ---
 
 ## 解决的问题
