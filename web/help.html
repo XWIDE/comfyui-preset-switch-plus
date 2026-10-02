@@ -123,6 +123,10 @@
     font-size: 13px;
   }
   a { color: var(--accent); }
+  .lang { margin: 0 0 18px; color: var(--dim); font-size: 13px; }
+  .lang b { color: var(--fg); }
+  .lang a { color: var(--accent); text-decoration: none; }
+  .lang a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -130,11 +134,15 @@
 <h1>X-WIDE Preset Switch Plus</h1>
 <div class="sub">帮助文档 · 基于 CarlMarkswx 的 <code>comfyui_workflow_preset_switch</code> 升级 · GPL-3.0</div>
 
+<div class="lang">
+  🌐 <b>简体中文</b> · <a href="help.en.html" onclick="try{localStorage.setItem('xwide_preset_switch_help_lang','en')}catch(e){}">English</a>
+</div>
+
 <div class="shot">
   <img src="preview.png" alt="X-WIDE Preset Switch 节点面板">
   <div class="cap">
     节点面板长这样：上面是<b>预设列表</b>（▶ 展开子模式，右侧<b>红点</b> = 有节点找不到了），
-    中间是<b>待记录 / 已同步</b>状态，下面是<b>完整 / 清爽模式</b>开关，最下面是<b>操作按钮</b>。
+    中间是<b>待记录 / 已记录</b>状态，下面是<b>完整 / 清爽模式</b>开关，最下面是<b>操作按钮</b>。
   </div>
 </div>
 
@@ -159,7 +167,7 @@
 <div class="box danger">
   <div class="t">⚠ 请先读这一段</div>
   <p>
-    点「记录当前」的时候，插件会把<b>画布上每一个节点</b>的当前状态原样记下来 ——
+    点「● 记录改动 / Record Changes」的时候，插件会把<b>画布上每一个节点</b>的当前状态原样记下来 ——
     <b>不只是提示词和参数</b>，还包括：
   </p>
   <ul>
@@ -228,7 +236,7 @@
 <h3>被排除的节点会怎样</h3>
 <table>
   <tr><th style="width:38%">行为</th><th>被排除的节点</th></tr>
-  <tr><td>点「记录当前」时</td><td>不进快照，不会被记下来</td></tr>
+  <tr><td>点「● 记录改动 / Record Changes」时</td><td>不进快照，不会被记下来</td></tr>
   <tr><td>切换预设时</td><td>控件值、模型、图片<b>一概不改</b></td></tr>
   <tr><td>启用 / 跳过 / 停用状态</td><td>不碰</td></tr>
   <tr><td>「未记录节点策略」</td><td>豁免，不会被旁路掉</td></tr>
@@ -278,7 +286,7 @@
 <div class="box">
   <div class="t">「新增预设」和「新增子模式」的区别</div>
   <ul>
-    <li><b>＋ 新增预设</b>：新建一份<b>空白</b>预设，画布原样不动，等你自己调好再点「记录当前」。</li>
+    <li><b>＋ 新增预设</b>：新建一份<b>空白</b>预设，画布原样不动，等你自己调好再点「● 记录改动 / Record Changes」。</li>
     <li><b>＋ 新增子模式</b>：在当前预设下面挂一份<b>已经记好</b>的子模式，只记跟父模式不一样的地方。</li>
   </ul>
 </div>

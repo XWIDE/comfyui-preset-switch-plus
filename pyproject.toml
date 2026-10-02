@@ -1,6 +1,6 @@
 [project]
 name = "preset-switch-plus"
-version = "0.12.19"
+version = "0.12.20"
 description = "Save and switch whole-workflow states: node bypass/mode AND widget parameter values, in one click."
 license = { file = "LICENSE" }
 readme = "README.md"

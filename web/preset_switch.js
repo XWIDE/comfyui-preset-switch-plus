@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.19";
+const PLUGIN_VERSION = "0.12.20";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -977,6 +977,17 @@ function fitNodeToContent(node) {
  * ------------------------------------------------------------------ */
 
 const CONFIG_KEY = "xwide_preset_switch_config";
+
+/*
+ * 帮助文档的语言。
+ *
+ * 单独一个扁平键，而不是塞进 CONFIG_DEFAULTS 那个 JSON：写它的有**两方** ——
+ * 插件这边（下面 helpDocUrl 读它），以及 help.html / help.en.html 里那一行
+ * 「🌐 简体中文 · English」的 onclick。文档页是同源的静态 HTML，让它去读写
+ * 整份配置 JSON 太脆，一个 key 一个值最不容易坏。
+ * 值："en" = 英文；其它（含缺失）= 中文，与默认语言一致。
+ */
+const HELP_LANG_KEY = "xwide_preset_switch_help_lang";
 
 const CONFIG_DEFAULTS = {
   hotkey: "alt+x",        // 空字符串 = 关闭快捷键
@@ -3760,8 +3771,16 @@ function closeHelpDialog() {
   return true;
 }
 
+function helpLangIsEnglish() {
+  try {
+    return localStorage.getItem(HELP_LANG_KEY) === "en";
+  } catch (error) {
+    return false; // 隐私模式等拿不到 localStorage —— 退回中文，不影响使用
+  }
+}
+
 function helpDocUrl() {
-  return pluginAssetUrl("help.html");
+  return pluginAssetUrl(helpLangIsEnglish() ? "help.en.html" : "help.html");
 }
 
 function showHelpDialog() {
@@ -3779,18 +3798,31 @@ function showHelpDialog() {
     // 文档自己撑满正文区；外链按钮放在底栏，跟着常驻
     dialog.textElement.classList.add("wps-help-host");
 
-    const frame = document.createElement("iframe");
-    frame.className = "wps-help-frame";
-    frame.setAttribute("title", "帮助文档 / Help");
-    frame.src = helpDocUrl();
-    dialog.textElement.appendChild(frame);
-
     const link = document.createElement("a");
     link.className = "wps-help-open";
-    link.href = helpDocUrl();
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.textContent = "在新标签页打开 / Open in a new tab ↗";
+
+    /* 文档里那行「🌐 简体中文 · English」写的是同一个 localStorage 键，
+       点完只换 iframe 自己的页面，插件这边的 href 还停在打开时的语言上 ——
+       每次 iframe 载入完重算一次，底栏这个链接才不会跟正文对不上。 */
+    const syncHelpLink = () => {
+      try {
+        link.href = helpDocUrl();
+      } catch (error) {
+        /* 拿不到就用打开时算出的那个地址 */
+      }
+    };
+
+    const frame = document.createElement("iframe");
+    frame.className = "wps-help-frame";
+    frame.setAttribute("title", "帮助文档 / Help");
+    frame.addEventListener?.("load", syncHelpLink);
+    frame.src = helpDocUrl();
+    dialog.textElement.appendChild(frame);
+
+    syncHelpLink();
     dialog.foot.insertBefore(link, dialog.foot.firstChild);
 
     uiLogEvent("help+", "帮助文档窗口");
@@ -6266,6 +6298,8 @@ try {
     showHelpDialog,
     closeHelpDialog,
     helpDocUrl,
+    helpLangIsEnglish,
+    HELP_LANG_KEY,
     jumpToPresetNode,
     jumpHighlightAlpha,
     allPresetNodes,

@@ -56,7 +56,7 @@ When a workflow has several states to it (say "text to image / image to image / 
 
 ## Compared with the Original
 
-| Feature | Original | This version v0.12.19 |
+| Feature | Original | This version v0.12.20 |
 |---|:---:|:---:|
 | Record/restore node bypass, mode | ✅ | ✅ |
 | Record/restore widget parameter values | ❌ | ✅ |
@@ -285,6 +285,20 @@ The setting lives in browser `localStorage` and is **shared by all workflows**; 
 
 ---
 
+## Help Document (Chinese + English)
+
+Settings window → **`📖 打开帮助文档`** opens the full manual in its own window: every feature
+explained, a keyboard-shortcut reference, the complete story on excluding nodes from recording,
+missing-node red dots, troubleshooting, and where your data lives.
+
+The manual ships in two versions — **Chinese** and **English** (`web/help.html` / `web/help.en.html`).
+The language line at the top of the page switches between them (**no JavaScript required** — it's
+just a link, so it works inside the dialog and in a new tab alike). Your choice is remembered in
+browser `localStorage`, so the next open lands on the version you picked, and the dialog's
+"open in a new tab" link follows along instead of pointing at the other language.
+
+---
+
 ## Options (optional)
 
 Adjustable via node right-click → `Properties`, or in the workflow metadata:
@@ -309,7 +323,7 @@ __wpsOverlay.info()      // print anchor point, zoom, rejected measurements, but
 __wpsOverlay.lastReject  // the last control measurement deemed untrustworthy
 ```
 
-The current version number (e.g. `v0.12.19`) is shown on the right of the panel header and next to the settings dialog title,
+The current version number (e.g. `v0.12.20`) is shown on the right of the panel header and next to the settings dialog title,
 so you can confirm which build the browser is running.
 
 ---

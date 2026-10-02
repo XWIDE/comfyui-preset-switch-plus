@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>X-WIDE Preset Switch Plus — Help</title>
+<style>
+  :root {
+    --bg: #1b1e24;
+    --panel: #23272f;
+    --line: #343a44;
+    --fg: #dfe3ea;
+    --dim: #969ca6;
+    --accent: #7fb2ff;
+    --warn: #d9a441;
+    --danger: #e06c66;
+    --ok: #6fbf85;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 34px 60px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    overflow-wrap: anywhere;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 24px;
+    letter-spacing: 0.5px;
+  }
+  .sub { color: var(--dim); margin-bottom: 26px; font-size: 13px; }
+  h2 {
+    margin: 34px 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--line);
+    font-size: 18px;
+    color: var(--accent);
+  }
+  h3 { margin: 20px 0 6px; font-size: 15px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+  code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #2e333c;
+    color: #ffd479;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.94em;
+  }
+  kbd {
+    display: inline-block;
+    padding: 1px 7px;
+    border: 1px solid #555c68;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: #2b3038;
+    font-family: inherit;
+    font-size: 0.92em;
+    white-space: nowrap;
+  }
+  table {
+    width: 100%;
+    margin: 12px 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #2a2f38; color: #cfd4da; font-weight: 600; }
+  .box {
+    margin: 14px 0;
+    padding: 12px 16px;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    background: var(--panel);
+  }
+  .box.warn { border-left-color: var(--warn); }
+  .box.danger { border-left-color: var(--danger); }
+  .box.ok { border-left-color: var(--ok); }
+  .box .t { font-weight: 700; margin-bottom: 4px; }
+  .toc {
+    padding: 14px 18px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ol { margin: 6px 0 0; }
+  .muted { color: var(--dim); }
+  .shot { margin: 4px 0 24px; text-align: center; }
+  .shot img {
+    max-width: 100%;
+    max-height: 440px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #14171c;
+  }
+  .shot .cap { margin-top: 8px; color: var(--dim); font-size: 12.5px; line-height: 1.6; }
+  .tag {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: #2f6b3f;
+    color: #d8f5e0;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .tag.red { background: #6e2626; color: #ffd7d7; }
+  .tag.yellow { background: #8a6a1f; color: #fff0c2; }
+  footer {
+    margin-top: 44px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--dim);
+    font-size: 13px;
+  }
+  a { color: var(--accent); }
+  .lang { margin: 0 0 18px; color: var(--dim); font-size: 13px; }
+  .lang b { color: var(--fg); }
+  .lang a { color: var(--accent); text-decoration: none; }
+  .lang a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>X-WIDE Preset Switch Plus</h1>
+<div class="sub">Help · an upgrade of CarlMarkswx's <code>comfyui_workflow_preset_switch</code> · GPL-3.0</div>
+
+<div class="lang">
+  🌐 <a href="help.html" onclick="try{localStorage.setItem('xwide_preset_switch_help_lang','zh')}catch(e){}">简体中文</a> · <b>English</b>
+</div>
+
+<div class="shot">
+  <img src="preview.png" alt="X-WIDE Preset Switch 节点面板">
+  <div class="cap">
+    Here's what the node panel looks like: on top is the <b>preset list</b> (▶ expands sub-modes, the <b>red dot</b> on the right = a node can't be found any more),
+    in the middle is the <b>To record / Recorded</b> status, below that is the <b>Full mode / Compact mode</b> toggle, and at the bottom are the <b>action buttons</b>.
+  </div>
+</div>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#most-important">The most important thing: a preset records "the entire state"</a></li>
+    <li><a href="#exclude">Excluding from recording: keeping certain nodes out of the preset's reach</a></li>
+    <li><a href="#quickstart">Quick start</a></li>
+    <li><a href="#panel">How to read the node panel</a></li>
+    <li><a href="#submode">Sub-modes</a></li>
+    <li><a href="#hotkey">Keyboard shortcuts</a></li>
+    <li><a href="#untracked">Untracked-node policy (bypass)</a></li>
+    <li><a href="#missing">The missing-node red dot</a></li>
+    <li><a href="#faq">FAQ</a></li>
+    <li><a href="#storage">Where the data lives</a></li>
+  </ol>
+</div>
+
+<h2 id="most-important">1. The most important thing: a preset records "the entire state"</h2>
+
+<div class="box danger">
+  <div class="t">⚠ Please read this part first</div>
+  <p>
+    When you click <b>● Record Changes</b>, the plugin writes down the current state of
+    <b>every node on the canvas</b>, exactly as it is — <b>not just the prompt and the parameters</b>,
+    but also:
+  </p>
+  <ul>
+    <li><b>The image loaded in LoadImage</b> (which one, what file name)</li>
+    <li><b>The model chosen in the model loaders</b> (Checkpoint, UNET, VAE, CLIP, LoRA…)</li>
+    <li>The inputs of nodes like <b>ControlNet / reference image / mask</b></li>
+    <li>The value of every slider, the selection of every dropdown, the on/off state of every toggle</li>
+    <li>Whether each node is <b>enabled</b>, <b>skipped (bypassed)</b> or <b>disabled</b></li>
+  </ul>
+  <p>
+    In other words: <b>switching between presets replaces all of these things</b>, not just the prompt.
+  </p>
+</div>
+
+<h3>What this leads to (a real example)</h3>
+<p>
+  Suppose you have two presets: <span class="tag">Image editing mode</span> and <span class="tag">Text-to-image mode</span>.
+</p>
+<ol>
+  <li>In "Image editing mode" you <b>loaded 6 images</b> into LoadImage.</li>
+  <li>You switch to "Text-to-image mode" — that preset only recorded <b>1 image</b> back when it was made.</li>
+  <li>The moment you switch, LoadImage's image is changed back to that 1 image, and <b>the 6 you just had are all pushed out</b>.</li>
+  <li>You switch back to "Image editing mode". If you <b>never clicked ● Record Changes</b> before switching away,
+      it rolls back to the last saved version — which may be a state with only 2 images.</li>
+</ol>
+<p>
+  There's also a subtler mechanism at work: nodes in a preset that <b>were never recorded</b> are, by default,
+  entirely <i>bypassed</i> by the "untracked-node policy" (see section 7). So those images may have been lost
+  either because they were overwritten, or because the whole LoadImage node was skipped.
+</p>
+
+<div class="box ok">
+  <div class="t">✓ The solution</div>
+  <p>
+    <b>Exclude from recording</b> the nodes you don't want the preset to touch (next section). Once excluded,
+    they're entirely yours to manage by hand, and neither of the mechanisms above will touch them again.
+  </p>
+</div>
+
+<h2 id="exclude">2. Excluding from recording: keeping certain nodes out of the preset's reach</h2>
+
+<h3>How to exclude</h3>
+<table>
+  <tr>
+    <th style="width:34%">Method</th>
+    <th>Action</th>
+  </tr>
+  <tr>
+    <td>Right-click on the canvas (fastest)</td>
+    <td>Select one or more nodes → <b>right-click</b> → <code>🚫 排除记录 / Exclude from recording</code></td>
+  </tr>
+  <tr>
+    <td>Exclusion list window</td>
+    <td>Right-click on an empty spot on the canvas → <code>📋 排除记录清单</code>; or open the plugin's <b>Settings</b> window → "Exclude from recording" → open the list</td>
+  </tr>
+</table>
+
+<p>In the list window, each row is a node, and the button on the left is the switch:</p>
+<ul>
+  <li><span class="tag">● 记录</span> lit up = this node <b>takes part</b> in the preset's recording and switching</li>
+  <li><span class="tag red">○ 排除</span> = this node <b>doesn't take part</b>; click it once to switch it back</li>
+  <li>At the top you can search (by node name / type / index), and tick "only show excluded"</li>
+  <li>"Restore all to recording" clears the whole list in one go</li>
+</ul>
+
+<h3>What happens to excluded nodes</h3>
+<table>
+  <tr><th style="width:38%">Behaviour</th><th>Excluded nodes</th></tr>
+  <tr><td>When you click ● Record Changes</td><td>Not included in the snapshot, never written down</td></tr>
+  <tr><td>When switching presets</td><td>Widget values, models and images are <b>left completely untouched</b></td></tr>
+  <tr><td>Enabled / skipped / disabled state</td><td>Not touched</td></tr>
+  <tr><td>The "untracked-node policy"</td><td>Exempt — they won't be bypassed</td></tr>
+  <tr><td>The panel's "To record" detection</td><td>Not counted — changing one won't turn the preset yellow</td></tr>
+  <tr><td>The missing-node red dot</td><td>Not counted</td></tr>
+</table>
+
+<div class="box">
+  <div class="t">How far the list reaches</div>
+  <p>
+    The list is <b>shared by the whole workflow</b> and applies to <b>every preset</b> in that workflow.
+    It's saved together with the workflow, so it still works when you open it on another machine.
+  </p>
+  <p class="muted">
+    Node indices only mean something inside this one workflow, so the list doesn't carry over between
+    workflows — in another project you'll have to set it up again.
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">What about nodes already recorded in old presets</div>
+  <p>
+    After excluding, <b>the existing records in old presets are not deleted</b> — they're simply skipped when
+    switching. So if you change your mind, just undo the exclusion and those old records work again immediately.
+  </p>
+</div>
+
+<h3>Which nodes are worth excluding</h3>
+<ul>
+  <li><code>LoadImage</code> / <code>LoadImageMask</code> / all kinds of image-loading nodes — the 6-image example above</li>
+  <li>Model loaders: <code>CheckpointLoaderSimple</code>, <code>UNETLoader</code>, <code>VAELoader</code>, <code>LoraLoader</code>…</li>
+  <li>Anything you switch by hand yourself and don't want a preset to carry away</li>
+</ul>
+<p class="muted">
+  The preset switch node itself (Preset Switch) never takes part in recording anyway, and doesn't show up in the list.
+</p>
+
+<h2 id="quickstart">3. Quick start</h2>
+<ol>
+  <li>Add the node <code>X-WIDE/Preset → PresetSwitch</code> on the canvas.</li>
+  <li>Set up a whole set of parameters, then click <b>＋ Add Preset</b> on the panel — it starts a new one from scratch.</li>
+  <li>Tweak the parameters again, then click <b>● Record Changes</b> to overwrite the current one.</li>
+  <li>Use <b>◀ Prev</b> / <b>▶ Next</b>, or drag the <code>preset_index</code> slider directly, to switch.</li>
+  <li>Want another, completely different configuration? Click ＋ Add Preset once more.</li>
+</ol>
+
+<div class="box">
+  <div class="t">The difference between "Add Preset" and "Add Sub-mode"</div>
+  <ul>
+    <li><b>＋ Add Preset</b>: creates a <b>blank</b> preset; the canvas is left exactly as it is, and you click ● Record Changes once you've adjusted things yourself.</li>
+    <li><b>＋ Add Sub-mode</b>: attaches an <b>already recorded</b> sub-mode under the current preset, recording only what differs from the parent.</li>
+  </ul>
+</div>
+
+<h2 id="panel">4. How to read the node panel</h2>
+<table>
+  <tr><th style="width:32%">What you see</th><th>What it means</th></tr>
+  <tr><td>Header <code>● Recorded · current 0</code></td><td>The status of the current preset: <span class="tag">● Recorded</span> green, <span class="tag yellow">● To record</span> yellow (there are changes not saved yet), <span class="tag red">● Not recorded</span> red</td></tr>
+  <tr><td>The little dot at the end of a row</td><td>The status of that one preset (same meaning as the header, but shown per preset)</td></tr>
+  <tr><td>The red <code>!</code> at the end of a row</td><td>That preset recorded nodes that are no longer on the canvas; click it to see the list</td></tr>
+  <tr><td>The round switch at the bottom-left</td><td>The Compact mode switch — click it to collapse / expand the toolbar</td></tr>
+</table>
+<p>
+  The row of buttons below the panel: <b>＋ Add Preset</b>, <b>＋ Add Sub-mode</b>,
+  <b>Record / overwrite</b> (it changes colour with the status, and even breathes), <b>🗑 Delete</b>, <b>◀ Prev</b>, <b>▶ Next</b>, <b>⚙ Settings</b>.
+</p>
+
+<h2 id="submode">5. Sub-modes</h2>
+<p>
+  A sub-mode hangs under a main preset (their indices look like <code>0.1</code>, <code>1.2</code>).
+  When you switch to a sub-mode, the plugin <b>first applies its parent preset, then layers the differences
+  the sub-mode itself recorded on top</b>.
+</p>
+<p>
+  It's made for "the same pipeline, only a few parameters change" — the parent preset holds the big picture,
+  the sub-mode holds those few variables.
+</p>
+
+<h2 id="hotkey">6. Keyboard shortcuts</h2>
+<table>
+  <tr><th style="width:26%">Default key</th><th>What it does</th></tr>
+  <tr>
+    <td><kbd>Alt</kbd> + <kbd>X</kbd></td>
+    <td>Enter / leave <b>Compact mode</b> (collapses the toolbar, leaving only the preset list). You can change it in Settings to "collapse the whole panel".</td>
+  </tr>
+  <tr>
+    <td><kbd>Alt</kbd> + <kbd>Z</kbd></td>
+    <td>
+      <b>Moves the preset switch node to under your mouse</b>: wherever the mouse is on the canvas, the node
+      jumps there, gets selected for you, and flashes a gold border to say "here it is".
+      When the mouse isn't over the canvas (say it's over the sidebar), it falls back to "move the view to the node".
+    </td>
+  </tr>
+</table>
+<p>Both keys can be changed in the Settings window, or cleared entirely. The Settings window warns you live if a combination conflicts.</p>
+
+<h2 id="untracked">7. Untracked-node policy (bypass)</h2>
+<p>
+  This one is easy to get confused about, but it matters. When you switch to a preset, the canvas may hold
+  nodes that <b>that preset has never recorded</b> (ones you added later, for instance). There are three ways
+  to handle them:
+</p>
+<table>
+  <tr><th style="width:26%">Policy</th><th>Behaviour</th></tr>
+  <tr><td><b>Bypass</b> (default)</td><td>Sets those nodes to "skipped" — they don't count when the graph runs</td></tr>
+  <tr><td>Enable</td><td>Sets them to "enabled"</td></tr>
+  <tr><td>Preserve</td><td>Does nothing at all</td></tr>
+</table>
+<div class="box warn">
+  <div class="t">If your images mysteriously disappear</div>
+  <p>
+    The default "bypass" is very likely the reason: if a LoadImage was never recorded by that preset, it gets
+    skipped entirely when you switch to it. <b>Excluding</b> nodes like that from recording avoids it completely.
+  </p>
+</div>
+
+<h2 id="missing">8. The missing-node red dot</h2>
+<p>
+  If a node that a preset recorded has been deleted, a <b>red <code>!</code></b> appears at the end of that
+  row. Click it to open the list, see exactly which ones are missing, and choose:
+</p>
+<ul>
+  <li><b>Copy the list</b> — copies out the names of the missing nodes, handy for going to install the plugins</li>
+  <li><b>Ignore this record</b> — removes the missing nodes from that preset, and the red dot disappears</li>
+</ul>
+<p class="muted">
+  If you keep missing that little exclamation mark, you can also <b>right-click the preset switch node</b> — the
+  menu lists the presets with missing nodes.
+</p>
+
+<h2 id="faq">9. FAQ</h2>
+
+<h3>"Failed to save workflow draft (保存工作流草稿失败)" keeps popping up on the right</h3>
+<p>
+  That's ComfyUI's own message, not a popup from this plugin — it means <b>the browser's localStorage is full</b>
+  (the quota is about 5MB). That's where workflow drafts are kept.
+</p>
+<p>
+  This plugin stores the preset data inside the workflow too, so a workflow with many nodes and large parameters
+  can easily hit the ceiling. Since <b>v0.12.17</b> two things have been done about it:
+</p>
+<ul>
+  <li><b>Widget-value pooling</b> — parameter values repeated across several presets are stored only once (measured at more than half saved)</li>
+  <li>Fixed a bug where every 250ms it wrongly decided "the layout is broken" and kept triggering re-layout / auto-save</li>
+</ul>
+<p>If you're still seeing this message:</p>
+<ol>
+  <li>Refresh the page and check that the version number at the bottom-right of the node panel header is the new one</li>
+  <li>After opening the workflow, press <kbd>Ctrl</kbd> + <kbd>S</kbd> once to save, so the slimmed-down data is written back</li>
+  <li>If that doesn't help, clear localStorage for this site: F12 → Application → Local Storage → delete this site</li>
+</ol>
+
+<h3>Clicking the buttons on the node does nothing / the UI occasionally stutters</h3>
+<p>
+  v0.12.17 fixed this. The cause was that the layout self-check's criteria left the title-bar height out of the
+  calculation, so every 250ms it wrongly decided "a widget has been squeezed out of the node" and cleared all
+  widget positions to force a re-layout — and ComfyUI works out "which widget did I click" from exactly those
+  positions, so that instant's click got lost. Upgrading makes it go away.
+</p>
+
+<h3>I placed two preset switch nodes and the second one went completely purple</h3>
+<p>
+  That's intentional: <b>a workflow may only have one preset switch in use</b>.
+  The second one is automatically disabled (a dark red note is drawn on the node) so two controllers don't fight
+  each other. Select it and press <kbd>Delete</kbd> to remove it.
+</p>
+
+<h3>Won't long preset names be too long to display</h3>
+<p>
+  No. Names that are too long in the panel are truncated with an ellipsis, and you can drag the node's width to
+  whatever you like.
+</p>
+
+<h3>When switching presets, why do some nodes turn purple (get skipped)</h3>
+<p>
+  See "untracked-node policy" in section 7. If you don't want that behaviour, change it to
+  "Preserve" in Settings, or <b>exclude</b> those nodes from recording.
+</p>
+
+<h2 id="storage">10. Where the data lives</h2>
+<table>
+  <tr><th style="width:32%">Data</th><th>Location</th></tr>
+  <tr>
+    <td>Presets (which nodes and which parameters were recorded)</td>
+    <td><b>Inside the workflow file</b>, travelling along with the <code>.json</code>. It's there on another machine, and when you send it to someone else.</td>
+  </tr>
+  <tr>
+    <td>The exclusion list</td>
+    <td>Same as above — also inside the workflow file</td>
+  </tr>
+  <tr>
+    <td>Shortcuts, zoom range, signature and other settings</td>
+    <td><b>Local to the browser</b>, shared by all workflows</td>
+  </tr>
+</table>
+<p class="muted">
+  The plugin doesn't go online, doesn't upload anything, and doesn't depend on any third-party Python package.
+</p>
+
+<footer>
+  <b>X-WIDE Preset Switch Plus</b><br />
+  The original version, <code>comfyui_workflow_preset_switch</code>, was developed by CarlMarkswx; copyright belongs to the original author.<br />
+  This upgraded version stays open source under <b>GPL-3.0</b>.
+</footer>
+
+</body>
+</html>
