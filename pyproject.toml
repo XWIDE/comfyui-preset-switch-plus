@@ -17,5 +17,5 @@ Documentation = "https://github.com/XWIDE/comfyui-preset-switch-plus/blob/main/R
 # 发布到 Comfy Registry 时用（https://registry.comfy.org）
 PublisherId = "xwide"
 DisplayName = "Preset Switch Plus"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/XWIDE/comfyui-preset-switch-plus/main/docs/icon.png"
 includes = []
