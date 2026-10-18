@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.20";
+const PLUGIN_VERSION = "0.12.33";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -1010,6 +1010,15 @@ const CONFIG_DEFAULTS = {
   brandUrl: "https://space.bilibili.com/374064919", // 作者主页
   repoUrl: "https://github.com/XWIDE/comfyui-preset-switch-plus", // 开源项目首页（用户 m06099 要求补上）
   brandImage: "./logo_xwide.png", // 设置窗口里展示的 logo
+  /*
+   * 停放（PARK）：切换预设时，把这份预设用不到的节点**从图里整个摘走**，
+   * 数据存进 graph.extra，切回来时原样装回。
+   * 节点不在图里 = 不画、不算、不占工作流体积 → 正面打「看到很多节点就卡」。
+   * 默认关闭；开启入口见 Console 的 __wpsPark.on()（面板开关下一轮再加）。
+   */
+  parkUntracked: false,
+      parkBypass: false,
+      compressPool: true,
 };
 
 /**
@@ -1971,6 +1980,130 @@ function pruneWidgetPool(store) {
   return removed;
 }
 
+/* ------------------------------------------------------------------ *
+ *  预设池压缩（v0.12.33）—— 实测定位后的针对性瘦身。
+ *
+ *  实测（用户那份 Qwen 大工作流，脚本 _wf_fat.mjs → _wf_fat.txt）：
+ *    graph.extra 预设 store = 1593 KB；其中 store.pool 147 条 = 1453 KB；
+ *    前 4 条就占 1406 KB（97%）：scene_json 843 KB(#726 FisherQwenPose)、
+ *    pose_json 235 KB(#744)、pose_json 164 KB ×2。
+ *    去重已经生效（同内容只存一份），剩下的全是这几个巨型 JSON 字符串控件。
+ *  所以：把 >128 KB 的池条目 gzip 后 base64 存进池，
+ *  载入时展开回明文，运行期读取路径保持同步、不用改任何调用方。
+ *
+ *  安全网：压完立刻解回来逐字节比对，对不上就不替换（宁可不省）。
+ * ------------------------------------------------------------------ */
+const POOL_GZ_MARK = "~gz:";
+const POOL_PACK_MIN = 128 * 1024;
+
+/** 池条目压起来之后，明文留一份在内存里给同步读取口用（不参与序列化）。 */
+const wpsPoolCache = new Map();
+
+async function wpsGzipText(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 4096) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 4096));
+  }
+  return POOL_GZ_MARK + btoa(bin);
+}
+
+async function wpsGunzipText(marked) {
+  const bin = atob(marked.slice(POOL_GZ_MARK.length));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return await new Response(stream).text();
+}
+
+/** 把池里的大条目压起来；逐字节自证通过才替换。 */
+async function wpsPackPool(minBytes) {
+  const store = ensureStore();
+  if (!store || !store.pool) return null;
+  const min = Number(minBytes) > 0 ? Number(minBytes) : POOL_PACK_MIN;
+  const t0 = performance.now();
+  let packed = 0;
+  let saved = 0;
+  const failed = [];
+  for (const [key, val] of Object.entries(store.pool)) {
+    if (typeof val !== "string" || val.length < min || val.startsWith(POOL_GZ_MARK)) continue;
+    try {
+      const gz = await wpsGzipText(val);
+      const back = await wpsGunzipText(gz);
+      if (back !== val) {
+        failed.push(key + "(逐字节不一致)");
+        continue;
+      }
+      if (gz.length >= val.length) continue; // 压不动就保持明文
+      wpsPoolCache.set(key, val);
+      store.pool[key] = gz;
+      packed += 1;
+      saved += val.length - gz.length;
+    } catch (error) {
+      failed.push(key + "(" + error.message + ")");
+    }
+  }
+  console.log(
+    `[${EXTENSION_NAME}] 预设池压缩：压了 ${packed} 条，省 ${Math.round(saved / 1024)} KB` +
+      (failed.length ? "，失败 " + failed.join(", ") : "") +
+      `（${Math.round(performance.now() - t0)} ms）`
+  );
+  return { packed, savedKB: Math.round(saved / 1024), failed };
+}
+
+/** 载入时把压缩条目展开回明文：运行期读取路径保持同步。 */
+async function wpsUnpackPool() {
+  const store = ensureStore();
+  if (!store || !store.pool) return 0;
+  let n = 0;
+  for (const [key, val] of Object.entries(store.pool)) {
+    if (typeof val !== "string" || !val.startsWith(POOL_GZ_MARK)) continue;
+    try {
+      const text = await wpsGunzipText(val);
+      JSON.parse(text); // 解出来必须是合法 JSON 才敢替换
+      store.pool[key] = text;
+      wpsPoolCache.delete(key);
+      n += 1;
+    } catch (error) {
+      console.warn(`[${EXTENSION_NAME}] 预设池条目 ${key} 解压失败，保持原样（这份预设的控件值读不回来）`, error);
+    }
+  }
+  if (n) console.log(`[${EXTENSION_NAME}] 预设池：已展开 ${n} 条压缩条目`);
+  return n;
+}
+
+/** Console 入口：__wpsStore.stats() / pack() / unpack() */
+try {
+  globalThis.__wpsStore = {
+    stats() {
+      const store = ensureStore();
+      const pool = store?.pool || {};
+      const keys = Object.keys(pool);
+      let total = 0;
+      let gz = 0;
+      for (const k of keys) {
+        const v = pool[k];
+        if (typeof v === "string") {
+          total += v.length;
+          if (v.startsWith(POOL_GZ_MARK)) gz += 1;
+        }
+      }
+      const out = { 条目: keys.length, 已压缩: gz, 合计KB: Math.round(total / 1024), 阈值KB: Math.round(POOL_PACK_MIN / 1024) };
+      console.log(out);
+      return out;
+    },
+    pack(minBytes) {
+      return wpsPackPool(minBytes);
+    },
+    unpack() {
+      return wpsUnpackPool();
+    },
+  };
+} catch (error) {
+  /* 调试入口挂不上不影响功能 */
+}
+
 /**
  * 取一条节点状态里存的控件值。
  *
@@ -1987,7 +2120,7 @@ function stateWidgets(state) {
   const key = typeof state.__w === "string" ? state.__w : null;
   if (!key) return null;
 
-  const json = ensureStore()?.pool?.[key];
+  let json = ensureStore()?.pool?.[key];
   if (typeof json !== "string") {
     console.warn(
       `[${EXTENSION_NAME}] 控件值池里找不到 ${key}（节点 #${state.id}），这份预设的控件值读不回来`
@@ -1995,6 +2128,18 @@ function stateWidgets(state) {
     return null;
   }
 
+  if (json.startsWith(POOL_GZ_MARK)) {
+    const cached = wpsPoolCache.get(key);
+    if (typeof cached === "string") {
+      json = cached; // 本会话刚压的：明文还在内存里，照常用
+    } else {
+      console.warn(
+        `[${EXTENSION_NAME}] 控件值池条目 ${key} 是压缩态且内存里没有明文（载入展开未跑完），这次先不套用`
+      );
+      wpsUnpackPool();
+      return null;
+    }
+  }
   let parsed = null;
   try {
     parsed = JSON.parse(json);
@@ -2181,10 +2326,460 @@ function recordPreset(key) {
   // 立刻池化：否则这一份会以明文躺在工作流里，直到下次重新打开工作流才被迁移
   poolPresetWidgets(store, store.presets[k]);
   pruneWidgetPool(store);
+  if (config.compressPool === true) wpsPackPool();
 
   app.graph?.setDirtyCanvas(true, true);
   console.log(`[${EXTENSION_NAME}] recorded preset ${k}`, store.presets[k]);
   return true;
+}
+
+/*
+ * 视图卡顿修复（自 ultra v0.15.2 移植，只搬这一件事，不带其它功能）。
+ * 病因：套用一次预设时，每个节点各自 setDirtyCanvas(true,true)，大流几百次全量重绘
+ *      = 用户说的"视图刷新快不起来"。
+ * 做法：批量期间节点不各自标脏，整批结束只标一次（app.canvas.setDirty + setDirtyCanvas(true,false)）。
+ * 开关：WPS_BATCH_DIRTY = false 时走完全一样的旧路径。
+ */
+const WPS_BATCH_DIRTY = true;
+let wpsBatchDepth = 0;
+function wpsBeginBatch() {
+  if (!WPS_BATCH_DIRTY) return;
+  // 重入（父子预设连套）保持 1；异常留下的残留也在下一次开始时自愈
+  wpsBatchDepth = 1;
+}
+function wpsEndBatch() {
+  if (!WPS_BATCH_DIRTY) {
+    app.graph?.setDirtyCanvas(true, true);
+    return;
+  }
+  if (wpsBatchDepth <= 0) return;
+  wpsBatchDepth -= 1;
+  if (wpsBatchDepth === 0) {
+    app.canvas?.setDirty?.(true, true);
+    app.graph?.setDirtyCanvas?.(true, false);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  停放（PARK）—— 用户 m00434 的方案：把这份预设用不到的节点从图里整个摘走，
+ *  数据存进 graph.extra[PARK_KEY]，切回来时原样装回。
+ *
+ *  为什么这样能打「看到很多节点就卡」：节点不在图里 → 每帧不用画它、插件的
+ *  每节点钩子不会跑它、保存工作流也不带它。实测签名就是「可见节点数↑→越卡」。
+ *
+ *  三条硬规矩：
+ *   ① 只存 JSON 字符串 —— 纯数据、不带 DOM 循环引用（页面里 configure 活对象会
+ *      撞 Converting circular structure to JSON），而且能逐字节比对；
+ *   ② 装回后立刻拿 node.serialize() 与存的那份逐字节比，对不上就不删记录
+ *      （宁可不删，绝不把用户数据弄丢）；
+ *   ③ 控制器节点 / 被排除记录的节点永不停放。
+ * ------------------------------------------------------------------ */
+const PARK_KEY = "comfyui_preset_switch_plus_parked";
+const PARK_VERSION = 1;
+
+function parkEnabled() {
+  return config.parkUntracked === true;
+}
+
+function parkStore() {
+  const graph = getGraph();
+  if (!graph) return null;
+  graph.extra = graph.extra || {};
+  let store = graph.extra[PARK_KEY];
+  if (!store || typeof store !== "object") {
+    store = { version: PARK_VERSION, nodes: {} };
+    graph.extra[PARK_KEY] = store;
+  }
+  if (!store.nodes || typeof store.nodes !== "object") store.nodes = {};
+  return store;
+}
+
+/* graph.links 新版是对象、个别分支是 Map：两个小助手抹平 */
+function wpsLinksAll() {
+  const links = app.graph?.links;
+  if (!links) return [];
+  if (typeof Map === "function" && links instanceof Map) return Array.from(links.values());
+  return Object.keys(links).map((key) => links[key]);
+}
+function wpsLinkPut(link) {
+  const links = app.graph?.links;
+  if (!links) return;
+  if (typeof Map === "function" && links instanceof Map) links.set(link[0], link);
+  else links[link[0]] = link;
+}
+
+/** 摘走一个节点：先把它自己 + 碰到的连线存进 extra，再从图里删掉。 */
+function parkOne(node, ownerKey) {
+  const id = Number(node.id);
+  if (!Number.isFinite(id)) return false;
+  let json;
+  try {
+    json = JSON.stringify(node.serialize());
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] 停放失败（序列化不了）#${id}`, error);
+    return false;
+  }
+  const links = wpsLinksAll()
+    .filter((l) => l && (Number(l[1]) === id || Number(l[3]) === id))
+    .map((l) => JSON.parse(JSON.stringify(l)));
+  const store = parkStore();
+  if (!store) return false;
+  store.nodes[String(id)] = {
+    json,
+    links,
+    owner: String(ownerKey),
+    ts: Date.now(),
+    type: String(node.type || ""),
+    title: String(node.title || node.type || ""),
+    bytes: json.length,
+  };
+  try {
+    app.graph.remove(node); // LiteGraph 自己负责断开两端连线
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] 停放失败（remove 报错）#${id}`, error);
+    delete store.nodes[String(id)];
+    return false;
+  }
+  return true;
+}
+
+/** 把一条连线接回两端：configure 只还原停放节点那一侧，活着的那一侧要补。 */
+function wpsRelink(link) {
+  const lid = Number(link[0]);
+  const origin = app.graph?.getNodeById?.(Number(link[1]));
+  const target = app.graph?.getNodeById?.(Number(link[3]));
+  if (!origin || !target) return false;
+  wpsLinkPut(link);
+  const out = origin.outputs && origin.outputs[Number(link[2])];
+  if (out) {
+    out.links = Array.isArray(out.links) ? out.links : [];
+    if (!out.links.some((x) => Number(x) === lid)) out.links.push(lid);
+  }
+  const inp = target.inputs && target.inputs[Number(link[4])];
+  if (inp) inp.link = lid;
+  return true;
+}
+
+/** 装回一个被停放的节点，装完立刻逐字节自证。 */
+function restoreOne(rec) {
+  const data = JSON.parse(rec.json);
+  const node = LiteGraph.createNode(data.type);
+  if (!node) throw new Error("createNode(" + data.type + ") 返回空");
+  node.configure(data); // id / pos / mode / widgets / 槽位连线 id 一起回来
+  if (app.graph?.getNodeById?.(node.id)) throw new Error("#" + node.id + " 已被占用，不覆盖");
+  app.graph.add(node);
+  if (Number(app.graph.last_node_id || 0) < Number(node.id)) app.graph.last_node_id = Number(node.id);
+  let linksOk = 0;
+  for (const l of Array.isArray(rec.links) ? rec.links : []) {
+    if (wpsRelink(l)) linksOk += 1;
+  }
+  const got = JSON.stringify(node.serialize());
+  return {
+    node,
+    same: rec.json === got,
+    linksMissing: (Array.isArray(rec.links) ? rec.links.length : 0) - linksOk,
+  };
+}
+
+/** 切到 k 之前：这份预设要用的节点如果正停着，先原样装回来。 */
+function wpsRestoreFor(k, trackedNodeIds) {
+  const store = parkStore();
+  if (!store) return 0;
+  let done = 0;
+  const bad = [];
+  for (const id of (trackedNodeIds || []).map(String)) {
+    if (app.graph?.getNodeById?.(Number(id))) continue;
+    const rec = store.nodes[id];
+    if (!rec || typeof rec.json !== "string") continue;
+    try {
+      const r = restoreOne(rec);
+      if (r.same && r.linksMissing === 0) {
+        delete store.nodes[id];
+        done += 1;
+      } else {
+        bad.push(id + "(字段差" + (r.same ? "无" : "有") + " 缺线" + r.linksMissing + ")");
+      }
+    } catch (error) {
+      bad.push(id + "(" + error.message + ")");
+    }
+  }
+  if (done) console.log(`[${EXTENSION_NAME}] 停放：装回 ${done} 个节点（预设 ${k}）`);
+  if (bad.length) {
+    console.warn(`[${EXTENSION_NAME}] 停放：${bad.length} 个没装回来 → ${bad.join(", ")}（extra 里的数据未删）`);
+  }
+  return done;
+}
+
+/** 切到 k 之后：这份预设用不到的节点全部停放。 */
+function wpsParkUntracked(k, trackedSet) {
+  let parked = 0;
+  for (const node of getAllNodes()) {
+    if (!node || typeof node.id === "undefined") continue;
+    if (node.type === TARGET_NODE_NAME) continue; // 控制器永远留在图上
+    if (isNodeExcluded(node)) continue; // 用户明确排除的不动
+    if (trackedSet.has(String(node.id))) continue;
+    if (parkOne(node, k)) parked += 1;
+  }
+  if (parked) console.log(`[${EXTENSION_NAME}] 停放：摘走 ${parked} 个节点（预设 ${k} 用不到）`);
+  return parked;
+}
+
+/* ------------------------------------------------------------------ *
+ *  停放加狠（v0.12.32）—— 用户 m00525：当前预设里被 bypass 的节点也整个摘走。
+ *
+ *  为什么必须带安全网：LiteGraph 的 bypass 会把输入「穿过去」接到下游，
+ *  所以一个 bypass 节点如果正在给活节点供数，摘走它 = 切断链路 = 跑图报错。
+ *  规则：只摘「下游接不到任何活节点」的那批（= 真正的死子图），
+ *  串在活链路上的 bypass 保持原样（它们本来也不算）。
+ *
+ *  顺带：摘/装的循环期间静音插件的每节点日志（widhider / PromptAssistant /
+ *  use_everywhere 每个节点都打一条，DevTools 开着时这本身就是主要耗时之一），
+ *  console.error 不静音；结束时报静音了多少条。
+ * ------------------------------------------------------------------ */
+function wpsLinkGet(lid) {
+  const links = app.graph?.links;
+  if (!links) return null;
+  if (typeof Map === "function" && links instanceof Map) return links.get(lid) || null;
+  return links[lid] || null;
+}
+
+let wpsQuietSaved = null;
+let wpsQuietMuted = 0;
+
+/** 循环期间把插件的每节点噪音收进计数（error 保持可见）。 */
+function wpsQuietOn() {
+  if (wpsQuietSaved) return;
+  const c = globalThis.console;
+  wpsQuietSaved = { log: c.log, info: c.info, warn: c.warn, trace: c.trace, debug: c.debug };
+  wpsQuietMuted = 0;
+  const sink = () => {
+    wpsQuietMuted += 1;
+  };
+  c.log = c.info = c.debug = c.trace = c.warn = sink;
+}
+function wpsQuietOff(label) {
+  if (!wpsQuietSaved) return;
+  const c = globalThis.console;
+  c.log = wpsQuietSaved.log;
+  c.info = wpsQuietSaved.info;
+  c.warn = wpsQuietSaved.warn;
+  c.trace = wpsQuietSaved.trace;
+  c.debug = wpsQuietSaved.debug;
+  wpsQuietSaved = null;
+  if (wpsQuietMuted > 0) {
+    c.log(`[${EXTENSION_NAME}] ${label}：期间静音了 ${wpsQuietMuted} 条插件每节点日志`);
+  }
+}
+
+/** 这份预设里被标成 bypass 的节点（mode=4 或 bypass=true）。 */
+function presetBypassIds(preset, trackedNodeIds) {
+  const ids = [];
+  for (const id of trackedNodeIds || []) {
+    const st = preset && preset.nodes ? preset.nodes[id] : null;
+    if (!st) continue;
+    if (Number(st.mode) === MODE_BYPASS || st.bypass === true) ids.push(String(id));
+  }
+  return ids;
+}
+
+/** 摘走「当前预设 bypass 掉、且下游没有任何活节点」的那批。 */
+function wpsParkDead(k, trackedNodeIds, preset) {
+  const cand = new Set();
+  for (const id of presetBypassIds(preset, trackedNodeIds)) {
+    const node = app.graph?.getNodeById?.(Number(id));
+    if (!node) continue;
+    if (node.type === TARGET_NODE_NAME) continue; // 控制器永远留在图上
+    if (isNodeExcluded(node)) continue; // 用户明确排除的不动
+    cand.add(String(node.id));
+  }
+  if (!cand.size) return 0;
+
+  /* 安全网：反复扫，谁的输出接到了一个「不在候选里的活节点」，谁就退出候选。 */
+  let changed = true;
+  let passes = 0;
+  while (changed && passes < 40) {
+    changed = false;
+    passes += 1;
+    for (const id of Array.from(cand)) {
+      const node = app.graph?.getNodeById?.(Number(id));
+      if (!node) {
+        cand.delete(id);
+        changed = true;
+        continue;
+      }
+      for (const out of node.outputs || []) {
+        const lids = Array.isArray(out && out.links) ? out.links : [];
+        for (const lid of lids) {
+          const link = wpsLinkGet(Number(lid));
+          const target = link ? app.graph?.getNodeById?.(Number(link[3])) : null;
+          if (target && !cand.has(String(target.id))) {
+            cand.delete(id);
+            changed = true;
+            break;
+          }
+        }
+        if (!cand.has(id)) break;
+      }
+    }
+  }
+
+  const t0 = performance.now();
+  let parked = 0;
+  wpsQuietOn();
+  try {
+    for (const id of Array.from(cand)) {
+      const node = app.graph?.getNodeById?.(Number(id));
+      if (node && parkOne(node, k)) parked += 1;
+    }
+  } finally {
+    wpsQuietOff(`摘 bypass（预设 ${k}）`);
+  }
+  if (parked) {
+    console.log(
+      `[${EXTENSION_NAME}] 停放：又摘走 ${parked} 个 bypass 死子图节点（预设 ${k}，` +
+        `${Math.round(performance.now() - t0)} ms，安全网扫 ${passes} 轮）`
+    );
+  }
+  return parked;
+}
+
+/** 带静音的停放入口（套用预设时调用）。 */
+function wpsParkPhase(k, trackedNodeIds, preset) {
+  const t0 = performance.now();
+  wpsQuietOn();
+  try {
+    wpsParkUntracked(k, new Set(trackedNodeIds));
+    if (config.parkBypass === true) wpsParkDead(k, trackedNodeIds, preset);
+  } finally {
+    wpsQuietOff("停放");
+  }
+  console.log(`[${EXTENSION_NAME}] 停放阶段用时 ${Math.round(performance.now() - t0)} ms，图里剩 ${getAllNodes().length} 个节点`);
+}
+
+/** 带静音的装回入口。 */
+function wpsRestoreForQ(k, trackedNodeIds) {
+  const t0 = performance.now();
+  wpsQuietOn();
+  try {
+    wpsRestoreFor(k, trackedNodeIds);
+  } finally {
+    wpsQuietOff("装回");
+  }
+  console.log(`[${EXTENSION_NAME}] 装回阶段用时 ${Math.round(performance.now() - t0)} ms，图里有 ${getAllNodes().length} 个节点`);
+}
+
+/** 全部装回（关掉开关 / 恢复现场）。 */
+function wpsRestoreAll() {
+  const store = parkStore();
+  if (!store) return 0;
+  let done = 0;
+  const bad = [];
+  for (const id of Object.keys(store.nodes)) {
+    const rec = store.nodes[id];
+    if (app.graph?.getNodeById?.(Number(id))) {
+      delete store.nodes[id];
+      continue;
+    }
+    try {
+      const r = restoreOne(rec);
+      if (r.same && r.linksMissing === 0) {
+        delete store.nodes[id];
+        done += 1;
+      } else {
+        bad.push(id + "(字段差" + (r.same ? "无" : "有") + " 缺线" + r.linksMissing + ")");
+      }
+    } catch (error) {
+      bad.push(id + "(" + error.message + ")");
+    }
+  }
+  app.canvas?.setDirty?.(true, true);
+  app.graph?.setDirtyCanvas?.(true, false);
+  console.log(
+    `[${EXTENSION_NAME}] 停放：全部装回 ${done} 个` +
+      (bad.length ? "，" + bad.length + " 个没装回来 → " + bad.join(", ") : "")
+  );
+  return done;
+}
+
+/** 页面加载完：开关关着、extra 里却还停着节点 → 一律装回，绝不留暗数据。 */
+function wpsParkSelfCheckOnLoad() {
+  try {
+    const store = getGraph()?.extra?.[PARK_KEY];
+    const n = store && store.nodes ? Object.keys(store.nodes).length : 0;
+    if (!n) return;
+    if (parkEnabled()) {
+      console.log(`[${EXTENSION_NAME}] 停放：这张图里停着 ${n} 个节点（开关开着，保持）`);
+    } else {
+      console.warn(`[${EXTENSION_NAME}] 停放：开关已关，把载入时停放的 ${n} 个节点全部装回`);
+      wpsRestoreAll();
+    }
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] 停放自检失败`, error);
+  }
+}
+
+/* Console 调试入口：__wpsPark.on() / off() / list() / restoreAll() / stats() */
+try {
+  globalThis.__wpsPark = {
+    get enabled() {
+      return parkEnabled();
+    },
+    on() {
+      config.parkUntracked = true;
+      saveConfig();
+      console.log(`[${EXTENSION_NAME}] 停放已开启：下次切换预设生效`);
+      return true;
+    },
+    off() {
+      config.parkUntracked = false;
+      saveConfig();
+      const n = wpsRestoreAll();
+      console.log(`[${EXTENSION_NAME}] 停放已关闭，装回 ${n} 个节点`);
+      return false;
+    },
+    get bypass() {
+      return config.parkBypass === true;
+    },
+    bypassOn() {
+      config.parkUntracked = true;
+      config.parkBypass = true;
+      saveConfig();
+      console.log(`[${EXTENSION_NAME}] 停放已开启（含 bypass 死子图）：下次切换预设生效`);
+      return true;
+    },
+    bypassOff() {
+      config.parkBypass = false;
+      saveConfig();
+      console.log(`[${EXTENSION_NAME}] bypass 停放已关闭（只摘用不到的节点）；已停放的节点保持，切预设会自动装回`);
+      return false;
+    },
+    list() {
+      const store = parkStore();
+      const rows = Object.keys(store?.nodes || {}).map((id) => {
+        const rec = store.nodes[id];
+        return {
+          id: Number(id),
+          type: rec.type,
+          title: rec.title,
+          owner: rec.owner,
+          KB: Math.round((rec.bytes || 0) / 1024),
+        };
+      });
+      console.table(rows);
+      return rows;
+    },
+    restoreAll() {
+      return wpsRestoreAll();
+    },
+    stats() {
+      const store = parkStore();
+      const ids = Object.keys(store?.nodes || {});
+      const bytes = ids.reduce((sum, id) => sum + (store.nodes[id].bytes || 0), 0);
+      return { 停放中: ids.length, 体积KB: Math.round(bytes / 1024), 开关: parkEnabled() ? "开" : "关" };
+    },
+  };
+} catch (error) {
+  console.warn(`[${EXTENSION_NAME}] 停放调试入口挂载失败`, error);
 }
 
 function applyStateToNode(node, state) {
@@ -2232,7 +2827,8 @@ function applyStateToNode(node, state) {
     }
   }
 
-  if (typeof node.setDirtyCanvas === "function") {
+  /* 批量期间不在这里标脏，由 wpsEndBatch 统一标一次（视图卡顿修复） */
+  if (!WPS_BATCH_DIRTY && typeof node.setDirtyCanvas === "function") {
     node.setDirtyCanvas(true, true);
   }
 }
@@ -2276,7 +2872,8 @@ function applyUntrackedNodePolicy(node, policy) {
     return;
   }
 
-  if (typeof node.setDirtyCanvas === "function") {
+  /* 批量期间不在这里标脏，由 wpsEndBatch 统一标一次（视图卡顿修复） */
+  if (!WPS_BATCH_DIRTY && typeof node.setDirtyCanvas === "function") {
     node.setDirtyCanvas(true, true);
   }
 }
@@ -2302,6 +2899,9 @@ function applyPresetState(key, { trackMissing = true } = {}) {
   const trackedNodeIds = Object.keys(preset.nodes || {});
   const missing = [];
 
+  /* 停放：这份预设要用的节点如果正停着，先原样装回（必须在套用状态之前） */
+  if (parkEnabled()) wpsRestoreForQ(k, trackedNodeIds);
+
   /*
    * 【空预设必须什么都不做】
    *
@@ -2321,6 +2921,9 @@ function applyPresetState(key, { trackMissing = true } = {}) {
     return { ok: true, missing: [] };
   }
 
+  /* 视图卡顿修复：从这里开始批量，整批只标脏一次（见 wpsBeginBatch / wpsEndBatch） */
+  wpsBeginBatch();
+
   for (const nodeId of trackedNodeIds) {
     const node = app.graph?.getNodeById?.(Number(nodeId));
     if (!node) {
@@ -2338,7 +2941,10 @@ function applyPresetState(key, { trackMissing = true } = {}) {
   }
 
   const untrackedPolicy = String(store.options?.onUntrackedNode || "bypass");
-  if (untrackedPolicy !== "preserve") {
+  if (parkEnabled()) {
+    /* 停放开着：用不到的节点整个摘走（比 bypass 更狠：不画、不算、不存进工作流） */
+    wpsParkPhase(k, trackedNodeIds, preset);
+  } else if (untrackedPolicy !== "preserve") {
     const tracked = new Set(trackedNodeIds);
     for (const node of getAllNodes()) {
       if (!node || typeof node.id === "undefined") continue;
@@ -2357,7 +2963,7 @@ function applyPresetState(key, { trackMissing = true } = {}) {
     }
   }
 
-  app.graph?.setDirtyCanvas(true, true);
+  wpsEndBatch();
   console.log(`[${EXTENSION_NAME}] applied preset ${k}`);
   return { ok: true, missing };
 }
@@ -6368,6 +6974,11 @@ try {
 
 app.registerExtension({
   name: EXTENSION_NAME,
+
+  async configure() {
+    wpsParkSelfCheckOnLoad();
+    wpsUnpackPool();
+  },
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== TARGET_NODE_NAME) return;

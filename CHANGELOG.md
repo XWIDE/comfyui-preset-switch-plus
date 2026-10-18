@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.12.33] —— 视图速度优化：一次重绘、节点停放、预设池压缩
+
+用户从 v0.12.20 起反馈「视图刷新快不起来」「在看到很多节点时很卡，单独节点微卡」，
+并且点名「先解决视图卡顿的问题，其他功能都不加」。这一版**只做性能**，四项，都拿实测数字说话。
+
+### 新增 / Added
+
+- **批量重绘**（`WPS_BATCH_DIRTY`）：旧路径套用一份预设时每个节点各自
+  `setDirtyCanvas(true, true)`，181 个跟踪节点 = 切一次两百多次全量重绘；现在整批只在
+  结束时标脏一次（`app.canvas.setDirty(true, true)` + `graph.setDirtyCanvas(true, false)`）。
+  dirty 调用 **~224 次 → 1 次**。开关关掉走完全一样的旧路径。
+- **节点停放（PARK）**，默认关：把当前预设没记录的节点整个从图里摘走，数据以 JSON 文本
+  存进 `graph.extra["comfyui_preset_switch_plus_parked"]`，切回来时 `createNode + configure`
+  原样装回并补连线；装回后逐字节比对，**只有完全一致且连线齐全才删记录**，绝不丢数据。
+  Console：`__wpsPark.on() / off() / list() / restoreAll() / stats()`。
+- **停放加狠（bypass 死子图）**，默认关：当前预设里被 bypass 的节点本来不参与计算，一并摘走。
+  安全网是**不动点扫描** —— 只摘「顺着连线下游够不到任何活节点」的那些，因为 LiteGraph 的
+  bypass 会把输入透传给下游，乱摘会切断活链路。Console：`__wpsPark.bypassOn() / bypassOff()`。
+- **预设池压缩**，默认开：预设池里 >128 KB 的条目 gzip + base64 存起来，载入时展开回明文，
+  运行期读取路径保持同步（内存里留一份明文缓存，刚压完立刻切预设也不读空）；压完立刻解回来
+  逐字节比对，**对不上就不替换**。实测用户那份 Qwen 大工作流：预设 store = 1593 KB，其中池
+  147 条 = 1453 KB，**前 4 条占 97%**（`scene_json` 843 KB @#726、`pose_json` 235 KB @#744、
+  `pose_json` 164 KB ×2）→ 一次省约 **1.4 MB**，工作流 4.30 MB → 约 2.9 MB。
+  Console：`__wpsStore.stats() / pack() / unpack()`。
+
+### 修复 / Fixed
+
+- **「保存工作流草稿失败」反复弹窗**：官方前端把草稿写进 localStorage，报错原文
+  `storage_quota_exhausted Error: localStorage quota exhausted after full draft eviction`
+  （@ `Proxy.saveDraft` ← `ComfyApi.persistCurrentWorkflow`）。单条 4.3 MB 的写入撞上限，
+  前端驱逐全部草稿后重试仍失败 —— 上面省下的这 1.4 MB 正好把它拉回可写区间。
+
+### 兼容性注意 / Compatibility
+
+- 压缩条目带 `~gz:` 前缀，**只有 v0.12.33 及以后认得**。要把插件退回旧版本的话，先在浏览器
+  Console 跑 `await __wpsStore.unpack()` 再保存工作流，否则旧版读不回这些控件值。
+- 停放两项默认关闭，关掉时行为与 v0.12.20 逐字节一致；开关存在浏览器本地设置里
+  （`parkUntracked` / `parkBypass`），不进工作流文件。
 ## [0.12.20] —— 说明书出中英双语，选过哪份就记住哪份
 
 用户看到原作者仓库首页那个「🌐 Language / 语言」的双语文档，问
