@@ -56,7 +56,7 @@
 
 ## 相比原版
 
-| 能力 | 原版 | 本版 v0.12.35 |
+| 能力 | 原版 | 本版 v0.12.40 |
 |---|:---:|:---:|
 | 记录/还原节点 bypass、mode | ✅ | ✅ |
 | 记录/还原 widget 参数值 | ❌ | ✅ |
@@ -322,7 +322,7 @@ __wpsOverlay.info()      // 打印基准点、缩放、被拒绝的测量值、�
 __wpsOverlay.lastReject  // 上一次被判定为不可信的控件测量值
 ```
 
-面板表头右侧显示当前版本号（如 `v0.12.35`），设置界面标题旁也会显示，
+面板表头右侧显示当前版本号（如 `v0.12.40`），设置界面标题旁也会显示，
 方便确认浏览器里跑的是哪一版。
 
 ---
@@ -374,14 +374,14 @@ Licensed under **GPL-3.0**. This is a modified version of [CarlMarkswx/comfyui_w
 
 ## 视图卡顿时的回退选项 / Rollback if the view feels slower
 
-如果更新到 v0.12.33–v0.12.35 之后觉得视图比 **v0.12.20** 卡，可以退回 v0.12.20（作者实测经验：那版问题更少）。
+如果更新到 v0.12.33–v0.12.40 之后觉得视图比 **v0.12.20** 卡，可以退回 v0.12.20（作者实测经验：那版问题更少）。
 **退回前先在浏览器 Console 跑 `__wpsSlim.off()` 和 `await __wpsStore.unpack()`，然后 Ctrl+S 保存一次** ——
 把新格式（`__wpsIdx` 下标表、`~gz:` 压缩条目）写回明文，否则旧版读不回这些控件值。数据无损。
 
 **去哪下 v0.12.20**：Comfy Registry / Manager 现在装不到旧版（官方只保留最新版压缩包），请到本仓库
 [Releases 页面的 v0.12.20](https://github.com/XWIDE/comfyui-preset-switch-plus/releases/tag/v0.12.20) 下载 `Assets → Source code (zip)`。
 
-If the view feels slower on v0.12.33–v0.12.35 than on **v0.12.20**, rolling back to v0.12.20 is a supported option
+If the view feels slower on v0.12.33–v0.12.40 than on **v0.12.20**, rolling back to v0.12.20 is a supported option
 (the author's own experience: that release has fewer issues). **Before rolling back, run `__wpsSlim.off()` and
 `await __wpsStore.unpack()` in the browser Console, then save once with Ctrl+S** — this writes the new formats
 (`__wpsIdx` index tables, `~gz:` packed entries) back as plain text, which older versions can read. No data loss.

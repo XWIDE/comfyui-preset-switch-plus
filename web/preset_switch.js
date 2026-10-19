@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.35";
+const PLUGIN_VERSION = "0.12.40";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -1018,7 +1018,7 @@ const CONFIG_DEFAULTS = {
    */
   parkUntracked: false,
       parkBypass: false,
-      compressPool: true,
+      compressPool: false,
   /*
    * 镜像去重：序列化时把与 widgets_values 逐字相同的派生镜像
    * （widgets_values_named）换成下标表，载入时展开回来。
@@ -1026,6 +1026,9 @@ const CONFIG_DEFAULTS = {
    * 配额装得下 → 「保存工作流草稿失败」消失。小图（镜像 <64KB）不动。
    */
   slimMirror: true,
+  draftGuard: true,
+  draftSlim: true,
+  tickThrottle: true,
 };
 
 /**
@@ -2195,6 +2198,575 @@ globalThis.__wpsSlim = {
 slimInstall();
 slimInstallConfigure();
 
+/* ------------------------------------------------------------------ *
+ *  草稿配额守卫（v0.12.37）—— 根治「保存工作流草稿失败」弹窗风暴。
+ *
+ *  实测机制（本机 Edge + 官方前端 settingStore-CUTKo1HX.js 的源码，脚本
+ *  _draft_src.mjs → _draft_src.txt，行号 @558482 起）：
+ *    persistActiveWorkflowDraft(...) → saveDraft(path, JSON.stringify(activeState), meta)
+ *    是【同步】写 localStorage，负载键 = `Comfy.Workflow.Draft.v2:<ws>:<hashPath>`，
+ *    值 = {"data":"<整份工作流 JSON>","updatedAt":<ms>}；
+ *    upsertEntry(index, path, meta, 32) ⇒ 官方最多留 **32 份** 草稿；
+ *    单份草稿 = 用户那份大工作流 ≈ 3.2M 字符 ≈ 6.4 MB（UTF-16 计），
+ *    站点配额约 10 MB ⇒ 第 2 份必然 QuotaExceededError →
+ *    handleQuotaExceeded 逐条删旧重试，全删完还不行 → reportQuotaExhausted →
+ *    界面弹一串红色「保存工作流草稿失败」。
+ *
+ *  本守卫的做法（只在写入【之前】动手，官方根本撞不到配额）：
+ *    包住 Storage.prototype.setItem：要写的是草稿负载键时，先按字节预算看总用量，
+ *    不够就【从最旧的开始】删草稿负载键，只保留最新 1 份（自动恢复够用），
+ *    再交给官方写。索引键不动 —— 官方 loadIndex() 自带 removeOrphanedEntries /
+ *    deleteOrphanPayloads，会在下次装载时把指向已删负载的索引项自己清掉。
+ *
+ *  「最旧」怎么判：官方把 updatedAt 放在负载值的【末尾】（data 在前面且巨大），
+ *    切片取不到 ⇒ 我们自己记一张很小的时间表（comfyui_preset_switch_plus.draftTimes），
+ *    每次观察到草稿写入就更新；表里没有的当最旧。
+ *
+ *  任何异常 → 原样交给官方（等于没装）。默认开，__wpsDraft 可关。
+ * ------------------------------------------------------------------ */
+
+const DG_BUDGET_BYTES = 8.5 * 1024 * 1024; // 站点配额约 10 MB（UTF-16 计），留 1.5 MB 余量
+const DG_KEEP_NEWEST = 1; // 最新的这几份永不驱逐（崩溃自动恢复要用）
+const DG_TIMES_KEY = "comfyui_preset_switch_plus.draftTimes"; // 我们自己的小时间表
+const DG_PAYLOAD_RE = /\.Draft\.v\d:/; // 只清负载键，索引/顺序键不动
+
+let dgUsageBytes = null; // 总用量缓存，靠 setItem/removeItem 包装维护增量
+let dgEvicted = 0;
+let dgLastRun = null;
+let dgWarnedOversize = false;
+
+function dgEnabled() {
+  return config.draftGuard === true;
+}
+
+function dgSize(key, value) {
+  // UTF-16：键和值都算字节数；再加一点每键固定开销
+  return (String(key).length + String(value == null ? "" : value).length) * 2 + 32;
+}
+
+function dgComputeUsage() {
+  let total = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k == null) continue;
+    total += dgSize(k, localStorage.getItem(k));
+  }
+  return total;
+}
+
+function dgTouch(deltaBytes) {
+  if (dgUsageBytes == null) dgUsageBytes = dgComputeUsage();
+  else dgUsageBytes += deltaBytes;
+}
+
+/** 我们自己的草稿写入时间表（很小）：{负载键: 最后写入毫秒}。 */
+function dgLoadTimes() {
+  try {
+    const raw = localStorage.getItem(DG_TIMES_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === "object" ? obj : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function dgSaveTimes(times, origSet) {
+  try {
+    // 顺手把已经不存在的键从表里剔掉，这张表永远只有几 KB
+    const alive = {};
+    for (const k of Object.keys(times)) {
+      if (localStorage.getItem(k) != null) alive[k] = times[k];
+    }
+    origSet.call(localStorage, DG_TIMES_KEY, JSON.stringify(alive));
+  } catch (_) {
+    // 时间表坏了不影响主流程（退化按体积排序）
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  真实配额探测 + 写失败兜底（v0.12.39）—— 一次修好红框风暴。
+ *
+ *  官方源码实测（settingStore-CUTKo1HX.js @559396，handleQuotaExceeded 末尾）：
+ *      return persistIndex(a),reportQuotaExhausted(...),markStorageUnavailable(),!1
+ *  而 saveDraft 第一行就是  if(!isStorageAvailable())return!1;
+ *  → 只要有一次写入撑爆配额、删光草稿重试仍失败，全局闸门 availability 被永久关掉，
+ *    之后每次自动保存连 setItem 都不调用就返回 false，GraphView 立刻弹
+ *    「保存工作流草稿失败」（挂在 graphChanged + 512ms 防抖上）→ 红框连刷。
+ *
+ *  所以本模块做三件事：
+ *   ① 用一次真写探测出这台浏览器**单条能写多大**（官方按 UTF-16 计，不同机器差别极大），
+ *      预算取实测值的 85%，不再写死；
+ *   ② 真不够时把除本次目标外的全部草稿负载删掉再重试（官方自己也会删，我们提前删干净）；
+ *   ③ 还写不进就**把这次异常吞掉**：官方以为写成功 → 不弹红框、不关闸门。
+ *      小工作流的崩溃自动恢复完全照旧；超大工作流本来就有 Ctrl+S / 预设池 / 文件快照三层保底。
+ * ------------------------------------------------------------------ */
+
+/** 官方判配额异常的写法（isQuotaExceeded），照抄一份，别依赖它内部实现。 */
+function dgIsQuotaError(error) {
+  if (error instanceof DOMException) {
+    return (
+      error.name === "QuotaExceededError" ||
+      error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+      error.code === 22 ||
+      error.code === 1014
+    );
+  }
+  const text = `${(error && error.name) || ""} ${(error && error.message) || ""}`;
+  return /quota/i.test(text);
+}
+
+let dgBudgetCached = null;
+// v0.12.40：最高只试 2 MB —— 探测本身不许变成卡顿源（8 MB 那档实测会同步卡住主线程）
+const DG_PROBE_SIZES = [2 * 1024 * 1024, 1024 * 1024, 512 * 1024, 256 * 1024];
+const DG_PROBE_KEY = "__wpsQuotaProbe__";
+
+/** 真写一次探出单条上限；只往 localStorage 塞一个临时键，立刻删掉。 */
+function dgProbeBudget(origSet) {
+  if (dgBudgetCached != null) return dgBudgetCached;
+  let okBytes = 0;
+  for (const n of DG_PROBE_SIZES) {
+    try {
+      origSet.call(globalThis.localStorage, DG_PROBE_KEY, "x".repeat(n));
+      okBytes = n;
+      break;
+    } catch (_) {
+      // 撑爆就试下一档
+    }
+  }
+  try {
+    globalThis.localStorage.removeItem(DG_PROBE_KEY);
+  } catch (_) {}
+  dgBudgetCached = okBytes ? Math.floor(okBytes * 0.85) : 256 * 1024;
+  console.log(
+    `[${EXTENSION_NAME}] 草稿守卫：实测本机单条最多写 ${Math.round((okBytes || 0) / 1024)} KB，预算取 ${Math.round(dgBudgetCached / 1024)} KB`
+  );
+  return dgBudgetCached;
+}
+
+function dgBudget() {
+  return dgBudgetCached == null ? DG_BUDGET_BYTES : dgBudgetCached;
+}
+
+let dgSwallowed = 0;
+let dgWarnedSwallow = false;
+let dgLastWrite = null;
+
+/** 删掉除 keepKey 以外的全部草稿负载键，返回释放字节。 */
+function dgEvictAllExcept(keepKey) {
+  let freed = 0;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k != null && k !== keepKey && DG_PAYLOAD_RE.test(k)) keys.push(k);
+  }
+  for (const k of keys) {
+    try {
+      freed += dgSize(k, localStorage.getItem(k));
+      localStorage.removeItem(k);
+      dgEvicted++;
+    } catch (_) {}
+  }
+  if (freed) dgTouch(-freed);
+  return freed;
+}
+
+/** 真正落盘。草稿负载键写不进时：先删光旧的重试，还不行就吞掉异常（挡住红框与闸门关闭）。 */
+function dgWritePayload(key, slimmed, origSet) {
+  const bytes = dgSize(key, slimmed);
+  try {
+    origSet.call(globalThis.localStorage, key, slimmed);
+    dgLastWrite = { 键: key.slice(0, 42), KB: Math.round(bytes / 1024), 结果: "写入成功" };
+    return true;
+  } catch (error) {
+    if (!dgIsQuotaError(error)) throw error;
+  }
+  // 第一次撑爆：把除本次之外的草稿全清掉再试
+  const freed = dgEvictAllExcept(key);
+  try {
+    origSet.call(globalThis.localStorage, key, slimmed);
+    dgLastWrite = { 键: key.slice(0, 42), KB: Math.round(bytes / 1024), 清出KB: Math.round(freed / 1024), 结果: "清空旧草稿后写入成功" };
+    console.log(
+      `[${EXTENSION_NAME}] 草稿守卫：这一份 ${Math.round(bytes / 1024)} KB 撑爆配额，已清掉旧草稿腾出 ${Math.round(freed / 1024)} KB 后写入成功`
+    );
+    return true;
+  } catch (error) {
+    if (!dgIsQuotaError(error)) throw error;
+    dgSwallowed++;
+    dgLastWrite = { 键: key.slice(0, 42), KB: Math.round(bytes / 1024), 预算KB: Math.round(dgBudget() / 1024), 结果: "单条超上限，本次跳过（红框已挡住）" };
+    if (!dgWarnedSwallow) {
+      dgWarnedSwallow = true;
+      console.warn(
+        `[${EXTENSION_NAME}] 草稿守卫：这份草稿本身 ${Math.round(bytes / 1024)} KB，超过本机单条约 ` +
+          `${Math.round(dgBudget() / 1024)} KB 上限，删光旧的也存不下 → 这次自动保存跳过，` +
+          `红框与「存储不可用」闸门都已挡住。工作流请用 Ctrl+S 存盘（预设池/快照不受影响）。`
+      );
+    }
+    return false; // 吞掉：官方以为写成功，不弹红框、不关闸门
+  }
+}
+
+
+/** 预算不够时驱逐最旧的草稿负载键，直到装得下 incoming。返回释放的字节数。 */
+function dgMakeRoom(incomingBytes, origSet) {
+  dgProbeBudget(origSet); // 预算必须用实测值，否则第一次就会按猜测的数多删
+  if (dgUsageBytes == null) dgUsageBytes = dgComputeUsage();
+  const need = dgUsageBytes + incomingBytes - dgBudget();
+  if (need <= 0) return 0;
+
+  const times = dgLoadTimes();
+  const payloads = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k == null || !DG_PAYLOAD_RE.test(k)) continue;
+    payloads.push({ key: k, bytes: dgSize(k, localStorage.getItem(k)), stamp: Number(times[k]) || 0 });
+  }
+  if (!payloads.length) return 0;
+
+  payloads.sort((a, b) => a.stamp - b.stamp || a.bytes - b.bytes); // 最旧在前
+  let freed = 0;
+  const keepFrom = payloads.length - DG_KEEP_NEWEST; // 最新的这些不删
+  for (let i = 0; i < payloads.length && freed < need; i++) {
+    if (i >= keepFrom) break;
+    const rec = payloads[i];
+    try {
+      localStorage.removeItem(rec.key);
+      dgEvicted++;
+      freed += rec.bytes;
+    } catch (_) {
+      break;
+    }
+  }
+  if (freed) {
+    dgUsageBytes -= freed;
+    dgSaveTimes(times, origSet);
+    dgLastRun = { 释放KB: Math.round(freed / 1024), 累计驱逐: dgEvicted, 用量KB: Math.round(dgUsageBytes / 1024) };
+    console.log(
+      `[${EXTENSION_NAME}] 草稿守卫：写前驱逐最旧草稿，释放 ${Math.round(freed / 1024)} KB（累计 ${dgEvicted} 条）`
+    );
+  }
+  // 单份就超预算 → 我们无能为力，喊一句让人能定位（例如镜像去重被关掉的大工作流）
+  if (!dgWarnedOversize && incomingBytes + 64 * 1024 > dgBudget()) {
+    dgWarnedOversize = true;
+    console.warn(
+      `[${EXTENSION_NAME}] 草稿守卫：这一份草稿本身 ${Math.round(incomingBytes / 1024)} KB 已超预算 ` +
+        `${Math.round(dgBudget() / 1024)} KB，删光旧的也装不下（详见 __wpsDraft.stats()）`
+    );
+  }
+  return freed;
+}
+
+let dgInstalled = false;
+function draftGuardInstall() {
+  if (dgInstalled) return true;
+  const proto = globalThis.Storage?.prototype;
+  if (!proto?.setItem) return false;
+  const origSet = proto.setItem;
+  const origRemove = proto.removeItem || null;
+
+  proto.setItem = function (key, value) {
+    const k = String(key);
+    const bytes = dgSize(k, value);
+    const isPayload = DG_PAYLOAD_RE.test(k);
+    try {
+      if (dgEnabled() && isPayload) dgMakeRoom(bytes, origSet);
+    } catch (error) {
+      // 守卫自己出任何事都不许影响官方写入
+      console.warn(`[${EXTENSION_NAME}] 草稿守卫跳过本次检查`, error);
+    }
+    let oldBytes = 0;
+    try {
+      oldBytes = localStorage.getItem(k) != null ? dgSize(k, localStorage.getItem(k)) : 0;
+    } catch (_) {
+      oldBytes = 0;
+    }
+    const slimmed = dgSlimFor(k, value);
+    let wrote = true;
+    if (isPayload && dgEnabled()) {
+      dgProbeBudget(origSet); // 第一次用到时探一次真实上限
+      wrote = dgWritePayload(k, slimmed, origSet);
+    } else {
+      origSet.call(this, k, slimmed);
+    }
+    if (wrote) dgTouch(dgSize(k, slimmed) - oldBytes);
+    if (isPayload) {
+      try {
+        const times = dgLoadTimes();
+        times[k] = Date.now();
+        dgSaveTimes(times, origSet);
+      } catch (_) {}
+    }
+  };
+
+  if (origRemove) {
+    proto.removeItem = function (key) {
+      const k = String(key);
+      let oldBytes = 0;
+      try {
+        oldBytes = dgSize(k, localStorage.getItem(k));
+      } catch (_) {
+        oldBytes = 0;
+      }
+      origRemove.call(this, key);
+      dgTouch(-oldBytes);
+    };
+  }
+
+  // 空闲时先探一次预算，避免「第一次自动保存」那一刻才去探测（那正是用户在操作的时候）
+  try {
+    const idle = globalThis.requestIdleCallback || ((f) => setTimeout(f, 3000));
+    idle(() => {
+      try {
+        dgProbeBudget(origSet);
+      } catch (_) {}
+    });
+  } catch (_) {}
+
+  dgInstalled = true;
+  return true;
+}
+
+globalThis.__wpsDraft = {
+  get enabled() {
+    return dgEnabled();
+  },
+  on() {
+    config.draftGuard = true;
+    saveConfig();
+    draftGuardInstall();
+    console.log(`[${EXTENSION_NAME}] 草稿守卫已开启`);
+  },
+  off() {
+    config.draftGuard = false;
+    saveConfig();
+    console.log(`[${EXTENSION_NAME}] 草稿守卫已关闭（官方行为恢复原样）`);
+  },
+  stats() {
+    if (dgUsageBytes == null) dgUsageBytes = dgComputeUsage();
+    let drafts = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && DG_PAYLOAD_RE.test(k)) drafts++;
+    }
+    return {
+      开关: dgEnabled(),
+      装钩子: dgInstalled,
+      用量KB: Math.round(dgUsageBytes / 1024),
+      预算KB: Math.round(dgBudget() / 1024),
+    实测单条上限KB: dgBudgetCached == null ? '未探测' : Math.round(dgBudgetCached / 0.85 / 1024),
+    吞掉次数: dgSwallowed,
+    最近写入: dgLastWrite,
+      草稿条数: drafts,
+      保留份数: DG_KEEP_NEWEST,
+      累计驱逐: dgEvicted,
+      最近一次: dgLastRun,
+    };
+  },
+  /** 立刻重算一次总用量（觉得缓存不准时用）。 */
+  refresh() {
+    dgUsageBytes = dgComputeUsage();
+    return { 用量KB: Math.round(dgUsageBytes / 1024) };
+  },
+};
+
+draftGuardInstall();
+
+/* ------------------------------------------------------------------ *
+ *  池子载入迁移（v0.12.38）—— 修掉 v0.12.33 留下的坑。
+ *
+ *  实测（用户 Console 截图 2026-10-19 16:12）：每次切预设都刷一条
+ *  「控件值池条目 xxx 是压缩态且内存里没有明文（载入展开未跑完），这次先不套用」，
+ *  而且同一批条目被反复展开多轮（屏上出现 已展开 8 / 6 / 3 / 8 条）。
+ *  两宗罪：① 刷屏；② 那几份大控件值（姿态/场景）在切换时【静默没套用】。
+ *
+ *  改法：整轮展开只跑一次（wpsPoolUnpacking 当闸门，防重复 kick）；
+ *  警告每个键只喊一句；展开成功后标脏画布（下次保存把明文写回文件），
+ *  并自动重跑一次套用，把刚才跳过的控件值补回来。
+ * ------------------------------------------------------------------ */
+
+let wpsPoolUnpacking = null; // 正在进行的一轮展开；有值 = 不再重复起头
+const wpsPoolWarned = new Set(); // 每个键只警告一次
+
+function wpsPoolWarnOnce(key) {
+  if (wpsPoolWarned.has(key)) return;
+  wpsPoolWarned.add(key);
+  console.warn(
+    `[${EXTENSION_NAME}] 控件值池条目 ${key} 是压缩态且明文还没展开，这次先不套用（同一键本会话只喊一次）`
+  );
+}
+
+/** 起一轮展开（幂等）。展开完：标脏 + 补跑一次套用。 */
+function wpsPoolKickUnpack() {
+  if (wpsPoolUnpacking) return wpsPoolUnpacking;
+  wpsPoolUnpacking = wpsUnpackPool()
+    .then((n) => {
+      wpsPoolUnpacking = null;
+      if (!n) return 0;
+      try {
+        app.graph?.setDirtyCanvas?.(true, false);
+        app.workflow?.markActiveStateAsDirty?.();
+      } catch (_) {
+        /* 标脏失败不影响功能，最多晚点才写回明文 */
+      }
+      console.log(`[${EXTENSION_NAME}] 预设池：本轮展开 ${n} 条，已标脏，下次保存把明文写回文件`);
+      try {
+        autoApplyByIndexChange({ panel: true }); // 把刚才跳过的控件值补回来
+      } catch (error) {
+        console.warn(`[${EXTENSION_NAME}] 展开后补跑套用失败（手动切一次预设即可）`, error);
+      }
+      return n;
+    })
+    .catch((error) => {
+      wpsPoolUnpacking = null;
+      console.warn(`[${EXTENSION_NAME}] 预设池展开这一轮失败`, error);
+      return 0;
+    });
+  return wpsPoolUnpacking;
+}
+
+try {
+  globalThis.__wpsPool = {
+    get unpacking() {
+      return !!wpsPoolUnpacking;
+    },
+    get 已警告过的键() {
+      return [...wpsPoolWarned];
+    },
+    unpack() {
+      return wpsPoolKickUnpack();
+    },
+  };
+} catch (_) {
+  /* 调试入口挂不上不影响功能 */
+}
+
+/* ------------------------------------------------------------------ *
+ *  草稿瘦身（v0.12.38）—— 红框「保存工作流草稿失败」的根因修法。
+ *
+ *  证据链：官方 persistActiveWorkflowDraft 写的是 JSON.stringify(activeState)，
+ *  这条路径【不经过】LiteGraph.LGraph.prototype.serialize，所以镜像去重(slim)
+ *  对它一直没生效；实测单份草稿 4.4M 字符 ≈ 8.8 MB（UTF-16），站点配额约 10 MB
+ *  ⇒ 载入后第一次自动保存就撞 QuotaExceededError → 官方 handleQuotaExceeded
+ *  删光草稿重试仍失败 → reportQuotaExhausted 弹红框，并把全局闸门
+ *  markStorageUnavailable() 关掉 ⇒ 本会话之后每次自动保存【连 setItem 都不调用】
+ *  直接返回失败 —— 与实测读数完全吻合（探针 __wpsLog 全空、草稿条数 0、用量 487 KB）。
+ *
+ *  改法：就在我们已包好的 setItem 里，把要写进草稿负载键的那一大串【当场瘦身】：
+ *  解一层 outer {data,updatedAt} → 找到 nodes 数组 → 把和 widgets_values
+ *  逐字相同的 widgets_values_named 条目换成 {键:下标} 小表（和 __wpsSlim 同一套
+ *  规则，载入时 slimRestore 会原样展开）→ 明显变小才替换写入。
+ *  任何一步出岔子 → 原样写入（等于没做），绝不拦官方写入。
+ * ------------------------------------------------------------------ */
+
+const DG_SLIM_MIN_CHARS = 2 * 1024 * 1024; // 小于 2M 字符的草稿不值得动（解析本身有成本）
+let dgSlimLast = null;
+let dgSlimTotalKB = 0;
+// v0.12.40：解析 4 MB 草稿要 100 ms 级，连续编辑时不能每次都解析 —— 限流
+const DG_SLIM_MIN_INTERVAL_MS = 5000;
+let dgSlimLastAt = 0;
+let dgSlimSkipBurst = 0;
+
+/** 就一个节点：镜像键里凡是在 widgets_values 里有同名同值条目的，换成下标表。 */
+function dgStripNodeMirror(node) {
+  const named = node.widgets_values_named;
+  const vals = node.widgets_values;
+  if (!named || typeof named !== "object" || !Array.isArray(vals)) return 0;
+  if (named[SLIM_MARK]) return 0; // 已经是下标表
+  const idx = {};
+  for (const k of Object.keys(named)) {
+    const v = named[k];
+    for (let i = 0; i < vals.length; i++) {
+      if (vals[i] === v) {
+        idx[k] = i;
+        break;
+      }
+    }
+  }
+  const keys = Object.keys(idx);
+  if (!keys.length) return 0;
+  const fresh = {};
+  for (const k of Object.keys(named)) {
+    if (!(k in idx)) fresh[k] = named[k]; // 对不上的原样留着，一个都不丢
+  }
+  fresh[SLIM_MARK] = idx;
+  node.widgets_values_named = fresh;
+  return keys.length;
+}
+
+/** 要写进 localStorage 的一串：草稿负载键且够大才瘦身。返回替换后的值（默认原样）。 */
+function dgSlimFor(key, value) {
+  try {
+    if (config.draftSlim !== true) return value;
+    if (!DG_PAYLOAD_RE.test(String(key))) return value;
+    const str = String(value);
+    if (str.length < DG_SLIM_MIN_CHARS) return value;
+    const nowMs = Date.now();
+    if (nowMs - dgSlimLastAt < DG_SLIM_MIN_INTERVAL_MS) {
+      dgSlimSkipBurst++; // 突发编辑：这次不解析，原样写（撑爆由 dgWritePayload 兜底）
+      return value;
+    }
+    dgSlimLastAt = nowMs;
+    const t0 = performance.now();
+    const outer = JSON.parse(str);
+    const raw = typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
+    const nodes = Array.isArray(raw?.nodes) ? raw.nodes : Array.isArray(raw?.workflow?.nodes) ? raw.workflow.nodes : null;
+    if (!nodes || !nodes.length) return value;
+    let stripped = 0;
+    for (const n of nodes) stripped += dgStripNodeMirror(n);
+    if (!stripped) return value;
+    const inner = JSON.stringify(raw);
+    const out = typeof outer.data === "string" ? JSON.stringify({ ...outer, data: inner }) : JSON.stringify({ ...outer, data: raw });
+    // 只省了不到 15% 就别动，免得白折腾
+    if (out.length > str.length * 0.85) return value;
+    dgSlimLast = {
+      原KB: Math.round(str.length / 1024),
+      瘦后KB: Math.round(out.length / 1024),
+      去重键数: stripped,
+      节点数: nodes.length,
+      用时ms: Math.round(performance.now() - t0),
+    };
+    dgSlimTotalKB += Math.round((str.length - out.length) / 1024);
+    console.log(
+      `[${EXTENSION_NAME}] 草稿瘦身：${dgSlimLast.原KB} KB → ${dgSlimLast.瘦后KB} KB（去重 ${stripped} 个镜像键，${dgSlimLast.用时ms} ms）`
+    );
+    return out;
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] 草稿瘦身跳过（原样写入）`, error);
+    return value;
+  }
+}
+
+try {
+  globalThis.__wpsDraftSlim = {
+    get 最近一次() {
+      return dgSlimLast;
+    },
+    get 累计省KB() {
+      return dgSlimTotalKB;
+    },
+    get 突发跳过() {
+      return dgSlimSkipBurst;
+    },
+    get 限流ms() {
+      return DG_SLIM_MIN_INTERVAL_MS;
+    },
+    get 开关() {
+      return config.draftSlim === true;
+    },
+    on() {
+      config.draftSlim = true;
+      saveConfig();
+    },
+    off() {
+      config.draftSlim = false;
+      saveConfig();
+    },
+  };
+} catch (_) {
+  /* 调试入口挂不上不影响功能 */
+}
+
+
 
 /* ------------------------------------------------------------------ *
  *  预设池压缩（v0.12.33）—— 实测定位后的针对性瘦身。
@@ -2349,10 +2921,8 @@ function stateWidgets(state) {
     if (typeof cached === "string") {
       json = cached; // 本会话刚压的：明文还在内存里，照常用
     } else {
-      console.warn(
-        `[${EXTENSION_NAME}] 控件值池条目 ${key} 是压缩态且内存里没有明文（载入展开未跑完），这次先不套用`
-      );
-      wpsUnpackPool();
+      wpsPoolWarnOnce(key);
+      wpsPoolKickUnpack();
       return null;
     }
   }
@@ -6906,7 +7476,7 @@ function paintControlButtons(node) {
  *  定时同步
  * ------------------------------------------------------------------ */
 
-function autoApplyByIndexChange() {
+function autoApplyByIndexChange(opts) {
   /*
    * 每轮先定出"唯一在用的那个节点"，再让其余的全部退休。
    *
@@ -6955,9 +7525,102 @@ function autoApplyByIndexChange() {
       node.__wpsLastAppliedIndex = rootIndex;
     }
 
-    refreshPresetWidgets(node);
+    if (opts?.panel !== false) refreshPresetWidgets(node);
   }
 }
+
+/* ------------------------------------------------------------------ *
+ *  定时节拍降频（v0.12.36）—— 正面打实测抓到的那条主线程占用。
+ *
+ *  实测证据：Console 报
+ *      [Violation] 'setInterval' handler took 163ms  preset_switch.js:6909
+ *  = 我们每 250ms 一拍的那次自愈扫描，单拍占主线程 163ms（约合 4 拍里有 1 拍在干活）。
+ *  贵的不是遍历节点，而是每拍都跑的 refreshPresetWidgets()：它要先跑
+ *  previewMissingNodes()（7 个预设 × ~181 个记录 id ≈ 1200 次 getNodeById，
+ *  而且 excludedIdSet() 在预设循环里被重建 7 次），再 buildPanelModel + 签名比对。
+ *
+ *  这一版把"每拍都要做的"和"兜底用的"拆开：
+ *    快拍（250ms）：定主节点、退休多余节点、核对按钮、preset_index 变了就套用 ——
+ *                   就是**不**刷面板。
+ *    满拍（默认 2000ms）：原样跑整套（含面板刷新）。自愈能力一条没少，
+ *                   只是兜底周期从 250ms 变 2s；而真实交互路径上本来就有
+ *                   19 处直接调 refreshPresetWidgets()，点一下立刻变，不用等节拍。
+ *    标签页在后台（document.hidden）时整拍跳过 = 后台不再空转。
+ *
+ *  config.tickThrottle = false 立刻回到老行为（每拍全跑），__wpsTick.stats() 自证。
+ * ------------------------------------------------------------------ */
+
+const TICK_FAST_MS = 250;
+const TICK_FULL_MS = 2000;
+
+let tickNextFullAt = 0;
+let tickFastCount = 0;
+let tickFullCount = 0;
+let tickSkippedHidden = 0;
+let tickLastFullMs = null;
+
+function wpsTickFast() {
+  // 与 autoApplyByIndexChange 同一套逻辑，只把最贵的那一步（刷面板）摘掉
+  autoApplyByIndexChange({ panel: false });
+}
+
+function wpsTickFull() {
+  const t0 = performance.now();
+  autoApplyByIndexChange();
+  tickLastFullMs = +(performance.now() - t0).toFixed(1);
+  tickFullCount += 1;
+}
+
+function wpsStartTicker() {
+  setInterval(() => {
+    try {
+      if (typeof document !== "undefined" && document.hidden) {
+        tickSkippedHidden += 1;
+        return;
+      }
+      if (!config.tickThrottle) {
+        wpsTickFull();
+        return;
+      }
+      const now = Date.now();
+      if (now >= tickNextFullAt) {
+        tickNextFullAt = now + TICK_FULL_MS;
+        wpsTickFull();
+      } else {
+        tickFastCount += 1;
+        wpsTickFast();
+      }
+    } catch (error) {
+      // 节拍出任何事都不许把定时器弄死：喊出来，下一拍继续
+      console.warn(`[${EXTENSION_NAME}] 定时节拍跳过本次`, error);
+    }
+  }, TICK_FAST_MS);
+}
+
+globalThis.__wpsTick = {
+  get enabled() {
+    return config.tickThrottle === true;
+  },
+  on() {
+    config.tickThrottle = true;
+    saveConfig();
+    console.log(`[${EXTENSION_NAME}] 定时节拍降频已开启（快拍 ${TICK_FAST_MS}ms / 满拍 ${TICK_FULL_MS}ms）`);
+  },
+  off() {
+    config.tickThrottle = false;
+    saveConfig();
+    console.log(`[${EXTENSION_NAME}] 定时节拍降频已关闭（回到每拍全跑）`);
+  },
+  stats() {
+    return {
+      开关: config.tickThrottle === true,
+      快拍: tickFastCount,
+      满拍: tickFullCount,
+      后台跳过: tickSkippedHidden,
+      最近满拍ms: tickLastFullMs,
+    };
+  },
+};
 
 /*
  * ------------------------------------------------------------------ *
@@ -7193,7 +7856,7 @@ app.registerExtension({
 
   async configure() {
     wpsParkSelfCheckOnLoad();
-    wpsUnpackPool();
+    wpsPoolKickUnpack();
     slimRestore();
   },
 
@@ -7408,7 +8071,7 @@ app.registerExtension({
       console.warn(`[${EXTENSION_NAME}] 排除菜单安装失败`, error);
     }
 
-    setInterval(autoApplyByIndexChange, 250);
+    wpsStartTicker();
 
     // 开机后自检：控件链一旦有 NaN，整排按钮会集体消失，肉眼只能看到"按钮不见了"。
     // 这里主动把真实布局打一份报告出来，省得每次都靠猜。
