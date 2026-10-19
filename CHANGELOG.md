@@ -21,8 +21,10 @@
   await __wpsStore.unpack()
   ```
   然后 **Ctrl+S 保存一次** —— 把 `__wpsIdx` 下标表和 `~gz:` 压缩条目写回明文，再换旧版文件。
-- 回退做法：ComfyUI Manager → 搜 `Preset Switch Plus` 装指定版本；或 git 检出标签后重启 ComfyUI：
-  `git -C custom_nodes/comfyui-preset-switch-plus checkout v0.12.20`。
+- 回退做法：**Comfy Registry / Manager 现在装不到旧版**（官方只保留最新版压缩包，`0.12.20/node.zip` 已 404）。
+  请到本仓库 [Releases 页面的 v0.12.20](https://github.com/XWIDE/comfyui-preset-switch-plus/releases/tag/v0.12.20) 下载
+  `Assets → Source code (zip)`，解压替换 `custom_nodes\comfyui-preset-switch-plus` 后重启 ComfyUI。
+  本机装了 git 的话也可以直接检出标签：`git -C custom_nodes/comfyui-preset-switch-plus checkout v0.12.20`。
 - 数据无损：停放记录、预设池、镜像都在工作流文件里，明文状态下任何版本都读得懂。
   回退后想回来，Console 跑 `__wpsSlim.on()` 即可重新开启镜像去重。
 

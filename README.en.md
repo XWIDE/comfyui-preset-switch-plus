@@ -379,6 +379,9 @@ see [CHANGELOG.md](CHANGELOG.md) for the changes. Copyright for the original bel
 **退回前先在浏览器 Console 跑 `__wpsSlim.off()` 和 `await __wpsStore.unpack()`，然后 Ctrl+S 保存一次** ——
 把新格式（`__wpsIdx` 下标表、`~gz:` 压缩条目）写回明文，否则旧版读不回这些控件值。数据无损。
 
+**去哪下 v0.12.20**：Comfy Registry / Manager 现在装不到旧版（官方只保留最新版压缩包），请到本仓库
+[Releases 页面的 v0.12.20](https://github.com/XWIDE/comfyui-preset-switch-plus/releases/tag/v0.12.20) 下载 `Assets → Source code (zip)`。
+
 If the view feels slower on v0.12.33–v0.12.35 than on **v0.12.20**, rolling back to v0.12.20 is a supported option
 (the author's own experience: that release has fewer issues). **Before rolling back, run `__wpsSlim.off()` and
 `await __wpsStore.unpack()` in the browser Console, then save once with Ctrl+S** — this writes the new formats
