@@ -370,3 +370,16 @@ see [CHANGELOG.md](CHANGELOG.md) for the changes. Copyright for the original bel
 用法：把画布摆成状态 A → `preset_index = 0` → `● 记录当前`；再摆成状态 B → `＋ 预设` → `● 记录当前`。之后点预设列表里的一行，整套状态就切过去了。
 
 以 **GPL-3.0** 发布。本仓库是 [CarlMarkswx/comfyui_workflow_preset_switch](https://github.com/CarlMarkswx/comfyui_workflow_preset_switch) 的修改版；改动见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 视图卡顿时的回退选项 / Rollback if the view feels slower
+
+如果更新到 v0.12.33–v0.12.35 之后觉得视图比 **v0.12.20** 卡，可以退回 v0.12.20（作者实测经验：那版问题更少）。
+**退回前先在浏览器 Console 跑 `__wpsSlim.off()` 和 `await __wpsStore.unpack()`，然后 Ctrl+S 保存一次** ——
+把新格式（`__wpsIdx` 下标表、`~gz:` 压缩条目）写回明文，否则旧版读不回这些控件值。数据无损。
+
+If the view feels slower on v0.12.33–v0.12.35 than on **v0.12.20**, rolling back to v0.12.20 is a supported option
+(the author's own experience: that release has fewer issues). **Before rolling back, run `__wpsSlim.off()` and
+`await __wpsStore.unpack()` in the browser Console, then save once with Ctrl+S** — this writes the new formats
+(`__wpsIdx` index tables, `~gz:` packed entries) back as plain text, which older versions can read. No data loss.

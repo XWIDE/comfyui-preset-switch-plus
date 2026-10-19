@@ -369,3 +369,16 @@ Node type names (`PresetSwitch`, `PresetGroupEditor`) are unchanged, so existing
 Workflow: place the graph in state A → `preset_index = 0` → `● record current`; place it in state B → `＋ preset` → `● record current`. Afterwards click a row in the preset list to apply the whole state.
 
 Licensed under **GPL-3.0**. This is a modified version of [CarlMarkswx/comfyui_workflow_preset_switch](https://github.com/CarlMarkswx/comfyui_workflow_preset_switch); see [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## 视图卡顿时的回退选项 / Rollback if the view feels slower
+
+如果更新到 v0.12.33–v0.12.35 之后觉得视图比 **v0.12.20** 卡，可以退回 v0.12.20（作者实测经验：那版问题更少）。
+**退回前先在浏览器 Console 跑 `__wpsSlim.off()` 和 `await __wpsStore.unpack()`，然后 Ctrl+S 保存一次** ——
+把新格式（`__wpsIdx` 下标表、`~gz:` 压缩条目）写回明文，否则旧版读不回这些控件值。数据无损。
+
+If the view feels slower on v0.12.33–v0.12.35 than on **v0.12.20**, rolling back to v0.12.20 is a supported option
+(the author's own experience: that release has fewer issues). **Before rolling back, run `__wpsSlim.off()` and
+`await __wpsStore.unpack()` in the browser Console, then save once with Ctrl+S** — this writes the new formats
+(`__wpsIdx` index tables, `~gz:` packed entries) back as plain text, which older versions can read. No data loss.
