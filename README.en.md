@@ -56,7 +56,7 @@ When a workflow has several states to it (say "text to image / image to image / 
 
 ## Compared with the Original
 
-| Feature | Original | This version v0.12.33 |
+| Feature | Original | This version v0.12.35 |
 |---|:---:|:---:|
 | Record/restore node bypass, mode | ✅ | ✅ |
 | Record/restore widget parameter values | ❌ | ✅ |
@@ -324,7 +324,7 @@ __wpsOverlay.info()      // print anchor point, zoom, rejected measurements, but
 __wpsOverlay.lastReject  // the last control measurement deemed untrustworthy
 ```
 
-The current version number (e.g. `v0.12.33`) is shown on the right of the panel header and next to the settings dialog title,
+The current version number (e.g. `v0.12.35`) is shown on the right of the panel header and next to the settings dialog title,
 so you can confirm which build the browser is running.
 
 ---

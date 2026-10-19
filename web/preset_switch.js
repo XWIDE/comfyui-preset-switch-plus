@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.33";
+const PLUGIN_VERSION = "0.12.35";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -1019,6 +1019,13 @@ const CONFIG_DEFAULTS = {
   parkUntracked: false,
       parkBypass: false,
       compressPool: true,
+  /*
+   * 镜像去重：序列化时把与 widgets_values 逐字相同的派生镜像
+   * （widgets_values_named）换成下标表，载入时展开回来。
+   * 实测这条能把草稿负载从 4.4M 字符压到 ~3.2M，让浏览器
+   * 配额装得下 → 「保存工作流草稿失败」消失。小图（镜像 <64KB）不动。
+   */
+  slimMirror: true,
 };
 
 /**
@@ -1979,6 +1986,215 @@ function pruneWidgetPool(store) {
   }
   return removed;
 }
+
+/* ------------------------------------------------------------------ *
+ *  镜像去重（v0.12.34）—— 打通「保存工作流草稿失败」。
+ *
+ *  实测根因（浏览器 Console 探针，2026-10-19）：
+ *    localStorage 用量 9,071 KB / 配额 ≈10 MB；最大一键
+ *    「Comfy.Workflow.Draft.v2:personal…」独占 **8,635 KB**，
+ *    连 1 MB 的单条写入都 QuotaExceededError → 官方前端每次图变化
+ *    都要写这条草稿（= 整张图 JSON.stringify），写完把配额顶满，
+ *    之后每次写入都失败 → 界面连排「保存工作流草稿失败」。
+ *
+ *  体积从哪来（脚本 _wf_where.mjs → _wf_where.txt，全树扫描）：
+ *    4,177 KB 里 8 条大字符串占 3,562 KB(83%)。其中
+ *    `widgets_values_named` 这个**派生镜像**与 `widgets_values` 数组
+ *    **逐字相同**（实测 183/223 节点带镜像、每个键都能在数组里找到同值），
+ *    光两条大的就重复存了 842 KB + 235 KB = 1,077 KB —— 等于每次序列化
+ *    都把同样的巨型控件数据写两遍。
+ *  gzip / 砍小数位都实测无效（姿态 JSON 熵太高：gzip 0.73、base64 涨回
+ *  0.97；长小数只有 25–99 个，砍完只省 4 KB），所以不压缩，只**去重**。
+ *
+ *  做法（通用判据，不写死任何节点 id / 类型名）：
+ *    · 只改「刚序列化出来的那份新 JSON」—— 画布上的活节点一个字节都不动，
+ *      所以运行期任何插件读 widgets_values_named 都照旧拿全量。
+ *    · 只删「值能在 widgets_values 里按下标逐字找到」的条目；
+ *      找不到的原样保留（无损优先）。
+ *    · 用一张极小的下标表 `{键: 下标}` 顶替被删的巨型值，载入时按
+ *      `widgets_values[下标]` 原样展开回来（不依赖控件名——实测镜像键
+ *      与控件名 0/180 对应，靠名字重建这条路是死的）。
+ *    · 闸门：单节点镜像总量 < 64 KB 就完全不动手 → 小工作流零改动。
+ * ------------------------------------------------------------------ */
+const SLIM_MARK = "__wpsIdx";
+const SLIM_MIN_CHARS = 64 * 1024;
+
+/** 本次运行的成绩单，给 Console 看。 */
+let slimLastRun = null;
+/** 载入展开的成绩单，给 Console 看。 */
+let slimLastRestore = null;
+
+function slimEnabled() {
+  return config.slimMirror !== false;
+}
+
+/**
+ * 序列化后置处理：把派生镜像换成下标表。
+ *
+ * @param {object} info LGraph.serialize() 刚产出的新对象（不是活节点）
+ */
+function slimStrip(info) {
+  const nodes = Array.isArray(info && info.nodes) ? info.nodes : [];
+  const t0 = performance.now();
+  let strippedNodes = 0;
+  let savedChars = 0;
+  for (const n of nodes) {
+    const named = n && n.widgets_values_named;
+    if (!named || typeof named !== "object") continue;
+    const keys = Object.keys(named).filter((k) => k !== SLIM_MARK);
+    if (!keys.length) continue;
+    const arr = Array.isArray(n.widgets_values) ? n.widgets_values : null;
+    if (!arr) continue;
+
+    /* 闸门：这条镜像小就不值得动，保持原样（通用：小图零改动） */
+    let mirrorChars = 0;
+    for (const k of keys) {
+      const v = named[k];
+      if (typeof v === "string") mirrorChars += v.length;
+      else mirrorChars += 8;
+    }
+    if (mirrorChars < SLIM_MIN_CHARS) continue;
+
+    const idxMap = {};
+    const keep = {};
+    for (const k of keys) {
+      const v = named[k];
+      const i = arr.indexOf(v); // 严格相等：同类型同值才算重复
+      if (i >= 0) {
+        idxMap[k] = i;
+        savedChars += typeof v === "string" ? v.length : JSON.stringify(v).length;
+      } else {
+        keep[k] = v; // 找不到同值的，原样留着
+      }
+    }
+    if (!Object.keys(idxMap).length) continue;
+
+    /* 关键：整体替换 info 上的属性，绝不改活节点共用的那个对象 */
+    n.widgets_values_named = Object.keys(keep).length
+      ? Object.assign({}, keep, { [SLIM_MARK]: idxMap })
+      : { [SLIM_MARK]: idxMap };
+    strippedNodes += 1;
+  }
+  slimLastRun = { 时间: new Date().toISOString(), 摘掉的节点: strippedNodes, 省下KB: Math.round(savedChars / 1024), 用时ms: Math.round((performance.now() - t0) * 10) / 10 };
+  return slimLastRun;
+}
+
+/** 载入后把下标表展开回全量镜像（活节点上），逐键自证。 */
+function slimRestore() {
+  const nodes = (app && app.graph && app.graph._nodes) || [];
+  let fixed = 0;
+  const bad = [];
+  for (const n of nodes) {
+    const named = n && n.widgets_values_named;
+    const map = named && named[SLIM_MARK];
+    if (!map || typeof map !== "object") continue;
+    const arr = Array.isArray(n.widgets_values) ? n.widgets_values : null;
+    delete named[SLIM_MARK];
+    for (const [k, i] of Object.entries(map)) {
+      if (!arr || !Number.isInteger(i) || i < 0 || i >= arr.length) {
+        bad.push(`#${n.id} ${n.type} 键=${k} 下标=${i} 越界`);
+        continue;
+      }
+      named[k] = arr[i];
+    }
+    if (!Object.keys(named).length) delete n.widgets_values_named;
+    fixed += 1;
+  }
+  if (fixed || bad.length) {
+    console.log(`[${EXTENSION_NAME}] 镜像去重：载入时展开回 ${fixed} 个节点${bad.length ? "，异常 " + bad.length + " 条" : ""}`);
+    if (bad.length) console.warn(bad.slice(0, 8).join("\n"));
+  }
+  slimLastRestore = { fixed, bad: bad.length };
+  return { fixed, bad };
+}
+
+/** 包一层 LGraph.serialize（草稿和 Ctrl+S 都走这里），只装一次。 */
+function slimInstall() {
+  const proto = globalThis.LiteGraph && globalThis.LiteGraph.LGraph && globalThis.LiteGraph.LGraph.prototype;
+  if (!proto || typeof proto.serialize !== "function") {
+    console.warn(`[${EXTENSION_NAME}] 镜像去重没装上：找不到 LGraph.prototype.serialize`);
+    return false;
+  }
+  if (proto.__wpsSlimPatched) return true;
+  const orig = proto.serialize;
+  proto.serialize = function wpsSlimSerialize(...args) {
+    const info = orig.apply(this, args);
+    try {
+      if (slimEnabled()) slimStrip(info);
+    } catch (error) {
+      // 装挂了必须喊出来：宁可不省体积，也不能让序列化坏掉
+      console.warn(`[${EXTENSION_NAME}] 镜像去重跳过本次序列化`, error);
+    }
+    return info;
+  };
+  proto.__wpsSlimPatched = true;
+  return true;
+}
+
+/**
+ * 包一层 LGraph.configure（图载入的唯一入口：草稿恢复、Ctrl+O、模板）。
+ * 实测 v0.12.34 只在扩展 configure() 里展开是不够的——那时 #726/#744
+ * 的镜像还没落地，刷新后活节点身上残留 {__wpsIdx:{…}}，读镜像键拿到 undefined。
+ */
+function slimInstallConfigure() {
+  const proto = globalThis.LiteGraph && globalThis.LiteGraph.LGraph && globalThis.LiteGraph.LGraph.prototype;
+  if (!proto || typeof proto.configure !== "function") return false;
+  if (proto.__wpsSlimConfPatched) return true;
+  const orig = proto.configure;
+  proto.configure = function wpsSlimConfigure(...args) {
+    const r = orig.apply(this, args);
+    const fix = () => {
+      try {
+        slimRestore();
+      } catch (error) {
+        console.warn(`[${EXTENSION_NAME}] 镜像展开跳过`, error);
+      }
+    };
+    fix();
+    /* 属性落地可能比 configure 晚一拍，下一帧再补一轮（幂等，第二次是空转） */
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(fix);
+    return r;
+  };
+  proto.__wpsSlimConfPatched = true;
+  return true;
+}
+
+globalThis.__wpsSlim = {
+  get enabled() {
+    return slimEnabled();
+  },
+  on() {
+    config.slimMirror = true;
+    saveConfig();
+    slimInstall();
+    console.log(`[${EXTENSION_NAME}] 镜像去重已开启`);
+  },
+  off() {
+    config.slimMirror = false;
+    saveConfig();
+    console.log(`[${EXTENSION_NAME}] 镜像去重已关闭（下次序列化起恢复原样）`);
+  },
+  stats() {
+    const p = globalThis.LiteGraph && globalThis.LiteGraph.LGraph && globalThis.LiteGraph.LGraph.prototype;
+    return {
+      开关: slimEnabled(),
+      闸门KB: SLIM_MIN_CHARS / 1024,
+      序列化钩子: !!(p && p.__wpsSlimPatched),
+      载入钩子: !!(p && p.__wpsSlimConfPatched),
+      展开节点: slimLastRestore ? slimLastRestore.fixed : 0,
+      最近一次: slimLastRun,
+    };
+  },
+  /** 立刻量一次「去掉镜像能省多少」，不写任何东西。 */
+  preview() {
+    const info = app.graph.serialize();
+    return slimLastRun;
+  },
+};
+
+slimInstall();
+slimInstallConfigure();
+
 
 /* ------------------------------------------------------------------ *
  *  预设池压缩（v0.12.33）—— 实测定位后的针对性瘦身。
@@ -6978,6 +7194,7 @@ app.registerExtension({
   async configure() {
     wpsParkSelfCheckOnLoad();
     wpsUnpackPool();
+    slimRestore();
   },
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
