@@ -3,3 +3,6 @@
 .DS_Store
 *.log
 *.bak-*
+tailmeta_config.json
+tailmeta_state.json
+tailmeta_log.txt

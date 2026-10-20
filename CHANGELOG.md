@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.51] —— TailMeta 扫描补修：一键只扫「当前在出图的文件夹」，修复历史问题图（扫完自动取消勾选）
+
+## [0.12.50] —— TailMeta：PNG 元数据后置，修好 XnView 类看图软件浏览 ComfyUI 出图卡顿
+
+- **TailMeta（新增，默认开）**：保存 PNG 后把 workflow/prompt 等元数据块重排到像素数据（IDAT）之后。
+  内容一字不改、不压缩，PNG 规范允许；看图器解完像素即出图、不再解析大段 JSON。
+  本机实测：7.4 MB 的 workflow 文本占文件 72%，正是 XnView 浏览出图卡顿的直接原因，重排后不卡。
+  拖回 ComfyUI 照常完整恢复工作流。开关：⚙ 设置 → PresetSwitchPlus →「保存时元数据后置」，取消勾选 = 回原生存法。
+  实现见 `tailmeta.py`（钩 SaveImage，预览图 temp 不动）；开关状态存 `tailmeta_config.json`。
+
 ## [0.12.40] —— 视图流畅性 + 「保存工作流草稿失败」根治（合并发布 0.12.36–0.12.40）
 
 ### 视图速度 / View speed

@@ -56,7 +56,7 @@ When a workflow has several states to it (say "text to image / image to image / 
 
 ## Compared with the Original
 
-| Feature | Original | This version v0.12.40 |
+| Feature | Original | This version v0.12.51 |
 |---|:---:|:---:|
 | Record/restore node bypass, mode | ✅ | ✅ |
 | Record/restore widget parameter values | ❌ | ✅ |

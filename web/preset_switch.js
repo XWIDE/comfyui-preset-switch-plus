@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.40";
+const PLUGIN_VERSION = "0.12.51";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -4408,6 +4408,33 @@ function buildSettingsBody() {
     </div>
   </div>
 
+  <!-- v0.12.50：TailMeta 开关 —— 本页直接读写服务端配置（tailmeta_config.json） -->
+  <div class="sec">
+    <h2>看图不卡 / TailMeta</h2>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+      <input type="checkbox" id="wps-tailmeta-toggle" style="width:auto;" />
+      <span><b>保存时元数据后置（修复看图软件卡顿）</b></span>
+    </label>
+    <div id="wps-tailmeta-status" class="status"></div>
+    <p class="hint" style="margin-top:8px;">
+      勾选后，保存 PNG 时把<b>工作流/提示词元数据挪到像素数据后面</b>——
+      XnView 这类看图软件浏览 ComfyUI 出图<b>不再卡顿</b>；
+      拖回 ComfyUI 照常完整恢复工作流，图片内容一字不改、不压缩。
+      取消勾选 = 回到 ComfyUI 原生保存格式（旧图不受影响）。
+    </p>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px;">
+      <input type="checkbox" id="wps-tailmeta-scan" style="width:auto;" />
+      <span><b>扫描当前出图文件夹（修复历史问题图）</b></span>
+    </label>
+    <div id="wps-tailmeta-scan-status" class="status"></div>
+    <p class="hint" style="margin-top:6px;">
+      用于忘记勾上面主开关、存出过几张卡图的情况：勾一下，只扫
+      <b>当前正在往里面存图的那个文件夹</b>（不扫全库、不递归），
+      把元数据在前的问题图修好，本来就正常的图一个字节都不碰；
+      扫完自动取消勾选，不用一直挂着。
+    </p>
+  </div>
+
   <!--
     排除记录。用户 m06692 要的功能，也是他自己描述的那个真实痛点：
     「我的编辑模型里面载入了 6 张图，然后我切过去到文生图的时候，他之前可能
@@ -4522,6 +4549,75 @@ function wireSettingsDialog(dialog, onChanged) {
   if (exOpen) exOpen.onclick = () => showExclusionDialog();
   const helpOpen = root.querySelector("#wps-help-open");
   if (helpOpen) helpOpen.onclick = () => showHelpDialog();
+
+  // v0.12.50：TailMeta 开关 —— 直接读写服务端配置（tailmeta_config.json，唯一事实源）
+  const tmToggle = root.querySelector("#wps-tailmeta-toggle");
+  const tmStatus = root.querySelector("#wps-tailmeta-status");
+  if (tmToggle) {
+    const paintTm = (ok, enabled, err) => {
+      if (!tmStatus) return;
+      if (!ok) {
+        tmStatus.style.color = "#c0603a";
+        tmStatus.textContent = "✕ 连不上服务端，开关暂不可用" + (err ? `（${err}）` : "");
+        tmToggle.disabled = true;
+        return;
+      }
+      tmToggle.disabled = false;
+      tmStatus.style.color = "#8b9199";
+      tmStatus.textContent = enabled
+        ? "✓ 已开启：新保存的 PNG 元数据后置"
+        : "已关闭：按 ComfyUI 原生格式保存";
+    };
+    tmToggle.checked = true;
+    fetch("/preset_switch_plus/tailmeta")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((d) => {
+        tmToggle.checked = !!d.enabled;
+        paintTm(true, !!d.enabled);
+      })
+      .catch((e) => paintTm(false, true, e && e.message));
+    tmToggle.onchange = () => {
+      const want = tmToggle.checked;
+      fetch("/preset_switch_plus/tailmeta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: want }),
+      })
+        .then((r) => (r.ok ? null : Promise.reject(new Error("HTTP " + r.status))))
+        .then(() => paintTm(true, want))
+        .catch((e) => {
+          tmToggle.checked = !want; // 保存失败回滚勾选状态
+          paintTm(false, !want, e && e.message);
+        });
+    };
+  }
+
+  // v0.12.51：一次性补扫当前出图文件夹（只修问题图；扫完自动取消勾选）
+  const tmScan = root.querySelector("#wps-tailmeta-scan");
+  const tmScanStatus = root.querySelector("#wps-tailmeta-scan-status");
+  if (tmScan) {
+    const paintScan = (color, text) => {
+      if (!tmScanStatus) return;
+      tmScanStatus.style.color = color;
+      tmScanStatus.textContent = text;
+    };
+    tmScan.onchange = async () => {
+      if (!tmScan.checked) return; // 取消勾选不触发任何事
+      tmScan.disabled = true;
+      paintScan("#8b9199", "扫描中：只看当前在出图的文件夹…");
+      try {
+        const r = await fetch("/preset_switch_plus/tailmeta/scan", { method: "POST" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        paintScan("#3a8f4d", `✓ 已扫 ${d.dir}：共 ${d.scanned} 张，修复 ${d.fixed} 张`);
+      } catch (e) {
+        paintScan("#c0603a", "✕ 扫描失败：" + (e && e.message));
+      } finally {
+        tmScan.checked = false;
+        tmScan.disabled = false;
+      }
+    };
+  }
 
   // 快捷键动作：清爽模式 / 整个面板收起
   const actionRadios = root.querySelectorAll
@@ -8100,3 +8196,4 @@ app.registerExtension({
     );
   },
 });
+
