@@ -7,4 +7,4 @@ WEB_DIRECTORY = "./web"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
-__version__ = "0.12.51"
+__version__ = "0.12.66"

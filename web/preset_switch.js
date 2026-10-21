@@ -22,7 +22,7 @@ const STORE_VERSION = 4;
  * 面板和设置界面会显示它，方便一眼确认浏览器里跑的是哪一版（前端是 no-store，
  * 刷新即最新；但确认一下总没错）。
  */
-const PLUGIN_VERSION = "0.12.51";
+const PLUGIN_VERSION = "0.12.66";
 const MODE_BYPASS = 4;
 const MODE_ENABLE = Number.isFinite(globalThis?.LiteGraph?.ALWAYS)
   ? globalThis.LiteGraph.ALWAYS
@@ -1029,6 +1029,10 @@ const CONFIG_DEFAULTS = {
   draftGuard: true,
   draftSlim: true,
   tickThrottle: true,
+  imageClear: true,
+  imageTitleButton: false,
+  // v0.12.66：勾上 = 清空图片不弹提示框，撤销交给 Ctrl+Z
+  imageClearNoAsk: false,
 };
 
 /**
@@ -4408,6 +4412,31 @@ function buildSettingsBody() {
     </div>
   </div>
 
+  <!-- v0.12.60：分享前清理图片引用 -->
+  <div class="sec">
+    <h2>分享前清理 / Share cleanup</h2>
+    <p class="hint">
+      把工作流里<b>所有图片引用</b>清干净，方便把 JSON 分享给别人：对方打开时不会自动带上你的图，
+      也不会出现「图片未加载」。<b>只改这个工作流里的引用，硬盘上的文件一个都不删</b>，input 文件夹原样不动。
+    </p>
+    <p class="hint">
+      Clears every image reference in this workflow (canvas nodes, preset snapshots, comparers, temp refs).
+      <b>No file on disk is deleted.</b>
+    </p>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+      <button type="button" id="wps-imgshare-scan" style="padding:6px 10px;border-radius:6px;border:1px solid #3a4048;background:#22262c;color:#e6e9ee;cursor:pointer;">先扫描看看会清掉什么 / Scan first</button>
+      <button type="button" id="wps-imgshare-apply" disabled style="padding:6px 10px;border-radius:6px;border:1px solid #3a4048;background:#22262c;color:#7a8089;cursor:not-allowed;">全部清空 / Clear all</button>
+    </div>
+    <div id="wps-imgshare-status" class="status" style="margin-top:8px;"></div>
+    <div id="wps-imgshare-list" style="margin-top:6px;font-size:12px;line-height:1.6;color:#b9bfc7;max-height:180px;overflow:auto;"></div>
+    <p class="hint" style="margin-top:8px;">清空后记得 <b>Ctrl+S</b> 保存；想恢复某张图，在这个节点上重新选一次文件即可。</p>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px;">
+      <input type="checkbox" id="wps-imgclear-noask" style="width:auto;" />
+      <span><b>清空图片不弹提示（默认直接清掉，撤销用 Ctrl+Z）</b></span>
+    </label>
+    <p class="hint" style="margin-top:6px;">不勾 = 清完弹一个框（上面有「撤销清空 / 关闭」）；勾上 = 不弹框，清完直接按 <b>Ctrl+Z</b> 还原。</p>
+  </div>
+
   <!-- v0.12.50：TailMeta 开关 —— 本页直接读写服务端配置（tailmeta_config.json） -->
   <div class="sec">
     <h2>看图不卡 / TailMeta</h2>
@@ -4592,6 +4621,72 @@ function wireSettingsDialog(dialog, onChanged) {
     };
   }
 
+  // v0.12.60：分享前清理（先扫描 → 确认 → 清空）
+  const scScan = root.querySelector("#wps-imgshare-scan");
+  const scApply = root.querySelector("#wps-imgshare-apply");
+  const scStatus = root.querySelector("#wps-imgshare-status");
+  const scList = root.querySelector("#wps-imgshare-list");
+  if (scScan && scApply) {
+    let scanned = null;
+    const paint = (color, text) => {
+      if (!scStatus) return;
+      scStatus.style.color = color;
+      scStatus.textContent = text;
+    };
+    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const render = (r) => {
+      if (!scList) return;
+      const lines = [];
+      for (const c of r.canvas) lines.push("• #" + c.id + " " + c.type + "：" + c.widgets.join(", "));
+      for (const c of r.comparer) lines.push("• #" + c.id + " " + c.type + "：对比器 " + c.count + " 张");
+      if (r.poolHits) lines.push("• 预设快照里的图片引用 " + r.poolHits + " 条");
+      scList.innerHTML = lines.map(esc).join("<br>");
+    };
+    const enableApply = (on) => {
+      scApply.disabled = !on;
+      scApply.style.color = on ? "#e6e9ee" : "#7a8089";
+      scApply.style.cursor = on ? "pointer" : "not-allowed";
+    };
+    scScan.onclick = () => {
+      try {
+        scanned = imgScanShare();
+        render(scanned);
+        const total = scanned.canvas.length + scanned.comparer.length + scanned.poolHits;
+        if (total) {
+          enableApply(true);
+          paint(
+            "#8b9199",
+            "扫到 " + scanned.canvas.length + " 个节点 / " + scanned.comparer.length + " 处对比器 / " + scanned.poolHits + " 条快照引用",
+          );
+        } else {
+          enableApply(false);
+          paint("#3a8f4d", "✓ 没有图片引用，可以直接分享");
+        }
+      } catch (e) {
+        paint("#c0603a", "✕ 扫描失败：" + (e && e.message));
+      }
+    };
+    scApply.onclick = () => {
+      if (!scanned) return;
+      const ok = window.confirm(
+        "确定清空全部图片引用吗？\n只改这个工作流里的引用，硬盘上的文件不会删除。\n\nClear all image references in this workflow? No file on disk is deleted.",
+      );
+      if (!ok) return;
+      try {
+        const r = imgApplyShare();
+        paint(
+          "#3a8f4d",
+          "✓ 已清空：" + r.canvas.length + " 个节点 / " + r.comparer.length + " 处对比器 / " + r.poolHits + " 条快照引用（记得 Ctrl+S 保存）",
+        );
+        if (scList) scList.innerHTML = "";
+        scanned = null;
+        enableApply(false);
+      } catch (e) {
+        paint("#c0603a", "✕ 清理失败：" + (e && e.message));
+      }
+    };
+  }
+
   // v0.12.51：一次性补扫当前出图文件夹（只修问题图；扫完自动取消勾选）
   const tmScan = root.querySelector("#wps-tailmeta-scan");
   const tmScanStatus = root.querySelector("#wps-tailmeta-scan-status");
@@ -4616,6 +4711,17 @@ function wireSettingsDialog(dialog, onChanged) {
         tmScan.checked = false;
         tmScan.disabled = false;
       }
+    };
+  }
+
+  // v0.12.66：清空图片不弹提示（撤销用 Ctrl+Z）
+  const imgNoAsk = root.querySelector("#wps-imgclear-noask");
+  if (imgNoAsk) {
+    imgNoAsk.checked = config.imageClearNoAsk === true;
+    imgNoAsk.onchange = () => {
+      config.imageClearNoAsk = !!imgNoAsk.checked;
+      saveConfig();
+      onChanged?.();
     };
   }
 
@@ -7658,6 +7764,7 @@ let tickLastFullMs = null;
 function wpsTickFast() {
   // 与 autoApplyByIndexChange 同一套逻辑，只把最贵的那一步（刷面板）摘掉
   autoApplyByIndexChange({ panel: false });
+  imgSyncVisibility();
 }
 
 function wpsTickFull() {
@@ -7947,13 +8054,972 @@ try {
   console.warn(`[${EXTENSION_NAME}] 内省入口挂载失败`, error);
 }
 
+/* ------------------------------------------------------------------ *
+ *  图像引用清空（v0.12.41）
+ *
+ *  为什么要这个：分享工作流时，图像载入控件里存的不是图片本身，
+ *  而是 input 目录下的**文件名**。删掉节点也清不干净 —— 预设快照
+ *  （extra.comfyui_workflow_state_presets_plus）里还留着一份；
+ *  而且文件在本机不存在时，LiteGraph 会退回列表第一项，看起来就像
+ *  「自动加载了某个文件」。
+ *
+ *  怎么判定哪些控件算「图像载入」：注册表里带 `image_upload: true`
+ *  的输入（实测本机 31 个节点类型命中：LoadImage / LoadImageMask /
+ *  LoadImageOutput / Painter / Crystools / Inspire / AILab_* /
+ *  ToggleLoadImage / LoadImageWithSwitch …）。不写死节点名单，
+ *  新插件的图像节点自动支持。
+ *
+ *  硬保证：**只改工作流里的值，一个硬盘文件都不碰。**
+ *  不动 input/、output/、temp/，也不删任何文件。
+ * ------------------------------------------------------------------ */
+
+const IMG_UNDO_KEY_SEP = ":";
+
+/** 撤销表：`${nodeId}:${widgetName}` -> 旧值（只在内存，不进文件）。 */
+const imgUndo = new Map();
+
+/** 每个节点类型缓存它的图像控件名，避免每次遍历 nodeData。 */
+const imgDefs = new Map();
+
+let imgWarned = false;
+
+function imgClearEnabled() {
+  return config.imageClear !== false;
+}
+
+/** 设置里勾了「不弹提示」→ 清完不再弹那个框，撤销全靠官方 Ctrl+Z。 */
+function imgQuiet() {
+  return config.imageClearNoAsk === true;
+}
+
+/** 从注册表定义里读出这个类型有哪些「可上传图片」控件名。 */
+function imgUploadNames(nodeData) {
+  const names = [];
+  for (const sect of ["required", "optional"]) {
+    const inputs = nodeData?.input?.[sect];
+    if (!inputs || typeof inputs !== "object") continue;
+    for (const [name, spec] of Object.entries(inputs)) {
+      const opts = Array.isArray(spec) ? spec[1] : null;
+      if (opts && opts.image_upload === true) names.push(name);
+    }
+  }
+  return names;
+}
+
+function imgNamesOf(node) {
+  if (!node?.type) return [];
+  const cached = imgDefs.get(node.type);
+  if (cached) return cached;
+  const def = node.constructor?.nodeData ?? null;
+  const names = def ? imgUploadNames(def) : [];
+  imgDefs.set(node.type, names);
+  return names;
+}
+
+/** 新版前端的画布预览控件（值也要一起清，不然预览还挂着旧图）。 */
+function imgPreviewWidgets(node) {
+  return (node.widgets || []).filter((w) => String(w.name).startsWith("$canvas-image-preview"));
+}
+
+function imgFilledWidgets(node, names) {
+  return (node.widgets || []).filter(
+    (w) =>
+      names.includes(w.name) &&
+      w.value !== "" &&
+      w.value !== IMG_CLEARED_VALUE &&
+      w.value !== null &&
+      w.value !== undefined,
+  );
+}
+
+function imgMarkChanged() {
+  try {
+    app?.graph?.change?.();
+  } catch {}
+  try {
+    app?.graph?.setDirtyCanvas?.(true, true);
+  } catch {}
+  // 让官方知道"图变了"（自动保存 / 脏标记），探不到就跳过。
+  try {
+    app?.workflow?.activeWorkflow?.changeTracker?.captureCanvasState?.();
+  } catch {}
+}
+
+/**
+ * 工具条按钮被点时到底选中了谁（返回节点数组，支持多选）。
+ *
+ * v0.12.54 的写法在这版前端拿不到节点：Vue 节点模式下
+ * `app.canvas.selected_item` 是 null，而 `graph.selection` 是 **Set**
+ * （数组下标取不到 → 长度判等失败）。实证：控制台打出
+ * 「清空图片：没找到选中节点」= 命令执行了，节点取不到。
+ * 所以按多个来源依次试，Set / 数组 / 单值都吃。
+ */
+function imgClickedNodes() {
+  const out = [];
+  const push = (x) => {
+    if (!x) return;
+    if (x instanceof Set) {
+      for (const i of x) out.push(i);
+    } else if (Array.isArray(x)) {
+      out.push(...x);
+    } else {
+      out.push(x);
+    }
+  };
+  try {
+    push(app?.canvas?.getSelectedItems?.());
+  } catch {}
+  if (!out.length) {
+    try {
+      push(app?.graph?.selection);
+    } catch {}
+  }
+  if (!out.length) {
+    try {
+      push(app?.store?.state?.selectedItems);
+    } catch {}
+  }
+  if (!out.length && app?.canvas?.selected_item) out.push(app.canvas.selected_item);
+  /*
+   * 上面那些 API 在这版前端实测全取不到 → 兜底吃工具条构建时的缓存，
+   * 见 imgNoteToolboxNode（官方源码保证每次构建都逐个选中项调用我们）。
+   */
+  for (const n of imgToolboxNodes()) out.push(n);
+  // 只留真节点（组 / 连线不算），Vue 包装过的取内层 .node，并按对象去重
+  const nodes = [];
+  for (const raw of out) {
+    const n = raw?.node ?? raw;
+    if (!n) continue;
+    /*
+     * 放宽：工具条递来的可能是 Vue 包装（isNode / widgets 都取不到），
+     * 只要能定位到图里的 id 就认（imgClearNode 里再按 widgets 实际清空）。
+     */
+    if (n.isNode !== true && n.widgets === undefined && typeof n.id !== "number") continue;
+    if (!nodes.includes(n)) nodes.push(n);
+  }
+  return nodes;
+}
+
+/*
+ * 「谁是选中节点」的工具条缓存。
+ *
+ * 官方源码 GraphView-C7jM5DM_.js 里那一排是这么来的：
+ *   selectedItems.map(e => invokeExtensions('getSelectionToolboxCommands', e))
+ * ⇒ 我们的 getSelectionToolboxCommands(node) **每次构建工具条都会被逐个选中项调用**，
+ * 参数就是那个选中项 —— 这是唯一保证带着节点的入口。
+ *
+ * 实测（v0.12.55）：canvas.getSelectedItems() / graph.selection /
+ * store.state.selectedItems / canvas.selected_item 在这版前端**全取不到**
+ * （点击只打出「没找到选中节点」）。所以点击时改吃这份带时间戳的缓存。
+ */
+const imgToolboxSeen = [];
+
+let imgToolboxShape = null;
+
+/** 官方递来的到底是什么形状（Vue 包装 / LiteGraph 节点 / 组）——探针用。 */
+function imgToolboxLastShape() {
+  return imgToolboxShape;
+}
+
+/**
+ * 记下「刚才给这个节点出过按钮」。
+ *
+ * v0.12.57 之前这里用 isNode === true 卡关，实测图标能出现（说明官方
+ * 确实逐个选中项调用了我们）却一条都没记进缓存 ⇒ 那层判据把 Vue 包装
+ * 对象挡掉了。现在照单全收，安全性交给消费端的「还在图里吗」过滤。
+ */
+function imgNoteToolboxNode(raw) {
+  const n = raw?.node ?? raw;
+  try {
+    imgToolboxShape = {
+      ctor: (n && n.constructor && n.constructor.name) || "?",
+      外层isNode: raw ? raw.isNode : "无raw",
+      内层isNode: n ? n.isNode : "无内层",
+      有node包装: !!(raw && raw.node),
+      id: n ? n.id : "-",
+      type: n ? n.type : "-",
+      控件数: Array.isArray(n && n.widgets) ? n.widgets.length : "无widgets",
+    };
+  } catch {}
+  if (!n) return;
+  const t = Date.now();
+  const hit = imgToolboxSeen.find((e) => e.node === n);
+  if (hit) {
+    hit.t = t;
+  } else {
+    imgToolboxSeen.push({ node: n, t });
+  }
+  if (imgToolboxSeen.length > 32) imgToolboxSeen.splice(0, imgToolboxSeen.length - 32);
+}
+
+/**
+ * 点击时可用的节点：最近 120 秒内被工具条引用过、且现在还在图里的。
+ *
+ * 窗口为什么宽：选中节点后工具条就构建了（时间戳落定），但用户可能
+ * 停十几秒才去点那一下 —— 2 秒窗口会把这种正常操作判成「没找到节点」。
+ * 宽窗口的风险是清到刚取消选中的旧节点，所以再加两道：① 必须还在 graph 里；
+ * ② 只取时间最新的那批（同一次构建的时间戳相同）。
+ */
+const IMG_TOOLBOX_WINDOW_MS = 120000;
+
+function imgToolboxNodes() {
+  const t = Date.now();
+  const alive = imgToolboxSeen.filter((e) => {
+    if (t - e.t > IMG_TOOLBOX_WINDOW_MS) return false;
+    try {
+      return app?.graph?._nodes?.includes(e.node) ?? true;
+    } catch {
+      return true;
+    }
+  });
+  if (!alive.length) return [];
+  const newest = Math.max(...alive.map((e) => e.t));
+  return alive.filter((e) => e.t === newest).map((e) => e.node);
+}
+
+/** 没东西可清时也要给个中英双语回音，别让点击"没反应"。 */
+function imgToastNothing(node) {
+  const old = document.getElementById("wps-img-toast");
+  if (old) old.remove();
+  const box = document.createElement("div");
+  box.id = "wps-img-toast";
+  box.style.cssText =
+    "position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100000;" +
+    "padding:8px 14px;border-radius:10px;background:#1f2a24;border:1px solid #3d6b57;" +
+    "color:#e8f1ec;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.45);";
+  box.textContent = `#${node.id} ${node.title || node.type}：现在没有图片引用可清空 / Nothing to clear`;
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 4000);
+}
+
+/**
+ * 中英双语提示 + 撤销按钮（纯 DOM，不进工作流文件）。
+ * all = 这次清掉的全部节点，撤销时一次全恢复；不传就只撤 node。
+ */
+function imgToast(node, saved, all) {
+  const list = Array.isArray(all) && all.length ? all : [node];
+  const old = document.getElementById("wps-img-toast");
+  if (old) old.remove();
+  const box = document.createElement("div");
+  box.id = "wps-img-toast";
+  box.style.cssText = [
+    "position:fixed",
+    "left:50%",
+    "top:14px",
+    "transform:translateX(-50%)",
+    "z-index:100000",
+    "max-width:min(720px,92vw)",
+    "padding:10px 14px",
+    "border-radius:10px",
+    "background:#1f2a24",
+    "border:1px solid #3d6b57",
+    "color:#e8f1ec",
+    "font-size:13px",
+    "line-height:1.55",
+    "box-shadow:0 6px 24px rgba(0,0,0,.45)",
+  ].join(";");
+  const who = `#${node.id} ${node.title || node.type}`;
+  const cn = `已清空 ${saved.length} 处图片引用（${who}）。只改了本工作流里的值，没有删除硬盘上任何文件，input 文件夹原样未动。`;
+  const en = `Cleared ${saved.length} image reference(s) on ${who}. Only values inside this workflow changed — no file on disk was deleted; your input folder is untouched.`;
+  const line1 = document.createElement("div");
+  line1.textContent = cn;
+  const line2 = document.createElement("div");
+  line2.textContent = en;
+  line2.style.cssText = "color:#9fb7ab;font-size:12px;margin-top:4px;";
+  const row = document.createElement("div");
+  row.style.cssText = "margin-top:8px;display:flex;gap:8px;";
+  const undo = document.createElement("button");
+  undo.textContent = "撤销清空 / Undo";
+  undo.style.cssText =
+    "padding:4px 10px;border-radius:6px;border:1px solid #3d6b57;background:#2a3b32;color:#e8f1ec;cursor:pointer;font-size:12px;";
+  undo.addEventListener("click", () => {
+    const back = imgRestoreNodes(list);
+    box.remove();
+    if (!back.length) {
+      console.log(`[${EXTENSION_NAME}] 撤销清空：没有可恢复的旧值（已撤过 / 手动改过值）`);
+    }
+  });
+  const close = document.createElement("button");
+  close.textContent = "关闭 / Close";
+  close.style.cssText =
+    "padding:4px 10px;border-radius:6px;border:1px solid #45544c;background:transparent;color:#b9c9c1;cursor:pointer;font-size:12px;";
+  close.addEventListener("click", () => box.remove());
+  row.append(undo, close);
+  box.append(line1, line2, row);
+  document.body.append(box);
+  setTimeout(() => {
+    if (box.isConnected) box.remove();
+  }, 12000);
+}
+
+/** 工具条递来的可能是 Vue 包装，按 id 找回图里的真节点来操作。 */
+function imgRealNode(node) {
+  const id = node?.id;
+  if (typeof id === "number") {
+    const hit = (app?.graph?._nodes || []).find((n) => n.id === id);
+    if (hit) return hit;
+  }
+  return node;
+}
+
+/**
+ * 把值装回控件。**必须走官方 setValue(v)**：Vue 渲染的小部件是从自己的
+ * 响应式状态读值的，直接 w.value = x 只改了模型、画面不刷新（实测点
+ * 「撤销清空」没反应就是这个）。setValue 会同时触发回调 + 重绘。
+ */
+function imgApplyValue(w, v) {
+  try {
+    if (typeof w.setValue === "function") {
+      w.setValue(v);
+      return;
+    }
+  } catch {}
+  w.value = v;
+}
+
+/**
+ * 新版前端把 app.store 整个删了（盘上证据 settingStore-DZ2-HL-F.js:199，
+ * ComfyApp 类里没有 store 字段），预览真身住在这里：pinia 的 nodeOutput
+ * store。官方 webcam 扩展也是走 setNodePreviewsByNodeId 这条路写预览。
+ */
+function imgPiniaStore() {
+  try {
+    const el = document.getElementById("vue-app");
+    const p = el?.__vue_app__?.config?.globalProperties?.$pinia;
+    return p?._s?.get("nodeOutput") ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 自己按文件名把预览取回来。
+ *
+ * 为什么不调官方控件回调（实测 m03489）：那个回调里带着「上传」流程 ——
+ * 一喊就弹 Windows 系统文件选择框，清一次图就被迫看到一个打开文件的窗口。
+ * 所以这里只做预览那一半：/view 取图 → node.imgs + pinia 预览。
+ * 新版控件值可能带 " [input]" 尾巴和子目录，先拆开再请求，不然 404。
+ */
+function imgLoadPreview(node, filename) {
+  const f0 = String(filename ?? "");
+  if (!f0 || f0 === IMG_CLEARED_VALUE) return false;
+  let name = f0;
+  let first = "input";
+  const m = f0.match(/^(.*?)\s*\[(input|temp|output)\]\s*$/);
+  if (m) { name = m[1].trim(); first = m[2]; }
+  let sub = "";
+  const slash = name.lastIndexOf("/");
+  if (slash >= 0) { sub = name.slice(0, slash); name = name.slice(slash + 1); }
+  const types = [first, "input", "output", "temp"].filter((x, i, a) => a.indexOf(x) === i);
+  const url = (t) => `/view?filename=${encodeURIComponent(name)}&type=${t}&subfolder=${encodeURIComponent(sub)}`;
+  const load = (i) => {
+    if (i >= types.length) return;
+    const t = types[i];
+    const img = new Image();
+    img.onload = () => {
+      try {
+        node.imgs = [img];
+        node.__previews = null;
+        node.natural_size = { w: img.naturalWidth, h: img.naturalHeight };
+      } catch {}
+      try {
+        imgPiniaStore()?.setNodePreviewsByNodeId?.(node.id, [url(t)]);
+      } catch {}
+      try {
+        app?.graph?.setDirtyCanvas?.(true, true);
+      } catch {}
+    };
+    img.onerror = () => load(i + 1);
+    img.src = url(t);
+  };
+  load(0);
+  return true;
+}
+
+/** 停用：官方回调带上传流程，喊了会弹系统文件框（m03489）。留着只为兼容旧引用。 */
+function imgFireCallback() {}
+
+/**
+ * 把节点的预览缓存彻底清掉。缩略图不是从控件值画的：画布节点读 node.imgs / __previews，
+ * Vue 节点读 store.nodePreviewImages[locatorId] —— 两条都清，画面才会真的空。
+ */
+function imgBustPreviews(node) {
+  try {
+    node.imgs = void 0;
+  } catch {}
+  try {
+    node.__previews = null;
+  } catch {}
+  try {
+    delete node.natural_size;
+  } catch {}
+  for (const w of (node.widgets || []).filter((x) => String(x.name).toLowerCase().includes("preview"))) {
+    try {
+      w.value = "";
+    } catch {}
+  }
+  const id = String(node.id);
+  const st = imgPiniaStore();
+  try {
+    const map = st?.$state?.nodePreviewImages ?? st?.nodePreviewImages;
+    if (map && typeof map === "object") {
+      for (const k of Object.keys(map)) {
+        if (k === id || k.endsWith(":" + id) || k.endsWith("-" + id)) {
+          try {
+            delete map[k];
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+  try {
+    st?.setNodePreviewsByNodeId?.(node.id, []);
+  } catch {}
+  /*
+   * 只清预览键不够：画布每帧都从 store输出（nodeOutputs）现读图回灌节点
+   * （实测 m00309：onDrawBackground → updatePreviews → getNodeOutputs 满屏刷）。
+   * 官方动作 removeNodeOutputsForNode 实测摘不掉键（传数字、传字符串都空转，m00304），
+   * 所以直删响应式 state 上的输出键 —— 官方没得读，才不会再变回来。
+   */
+  const bustOutputsBag = (bag) => {
+    if (!bag || typeof bag !== "object") return;
+    for (const k of Object.keys(bag)) {
+      if (k === id || k.endsWith(":" + id) || k.endsWith("-" + id)) {
+        try {
+          delete bag[k];
+        } catch {}
+      }
+    }
+  };
+  try {
+    bustOutputsBag(st?.nodeOutputs);
+  } catch {}
+  try {
+    const raw = st?.$state && typeof st.$state === "object" ? (st.$state.value ?? st.$state) : null;
+    bustOutputsBag(raw?.nodeOutputs ?? raw);
+  } catch {}
+}
+
+/** 撤销一组节点（支持多选时一次全恢复）。 */
+function imgRestoreNodes(list) {
+  const back = [];
+  for (const raw of list || []) {
+    const node = imgRealNode(raw);
+    if (!node) continue;
+    // 先把旧预览清干净，再装回值，然后自己按原文件名把图取回来
+    // （不能喊官方回调：它带上传流程，会弹系统文件选择框）
+    imgBustPreviews(node);
+    const names = [];
+    for (const w of node.widgets || []) {
+      const key = `${node.id}${IMG_UNDO_KEY_SEP}${w.name}`;
+      if (!imgUndo.has(key)) continue;
+      const old = imgUndo.get(key);
+      imgUndo.delete(key);
+      imgApplyValue(w, old);
+      names.push(old);
+      back.push(`#${node.id}:${w.name}`);
+    }
+    for (const f of names) imgLoadPreview(node, f);
+    try {
+      node.refresh?.();
+    } catch {}
+  }
+  if (back.length) {
+    imgMarkChanged();
+    try {
+      app?.graph?.setDirtyCanvas?.(true, true);
+    } catch {}
+    console.log(`[${EXTENSION_NAME}] 已撤销清空：${back.join(", ")}`);
+  }
+  return back;
+}
+
+/** 单节点撤销（老调用点用）。 */
+function imgRestoreNode(node) {
+  return imgRestoreNodes([node]);
+}
+
+/** 清空一个节点上所有图片引用，返回清掉的控件名。 */
+function imgClearNode(node) {
+  const names = imgNamesOf(node);
+  if (!names.length) return [];
+  const hit = imgFilledWidgets(node, names);
+  const saved = [];
+  // 清空只要把缓存和值都清掉就行：预览不再取回来，画面自然空。
+  // （不喊官方回调 —— 它带上传流程，会弹系统文件框）
+  // 记一笔进画布历史：勾了「不弹提示」后，撤销全靠官方 Ctrl+Z
+  try {
+    app?.graph?.beforeChange?.();
+  } catch {}
+  imgBustPreviews(node);
+  for (const w of hit) {
+    imgUndo.set(`${node.id}${IMG_UNDO_KEY_SEP}${w.name}`, w.value);
+    imgApplyValue(w, IMG_CLEARED_VALUE);
+    saved.push(w.name);
+  }
+  try {
+    app?.graph?.afterChange?.();
+  } catch {}
+  try {
+    app?.graph?.setDirtyCanvas?.(true, true);
+  } catch {}
+  if (saved.length) imgMarkChanged();
+  return saved;
+}
+
+const IMG_BTN_ON = "🧹";
+
+/**
+ * 清空后写进控件的哨兵值。
+ *
+ * 不能写空串：LiteGraph 的下拉控件（Combo）拿到空值会回落到选项表第一项，
+ * 用户看到的就是「清空了又自动填回第一张图」= 点了没作用。
+ * 给一个不在选项表里的字符串，画布上就老老实实显示它自己。
+ */
+const IMG_CLEARED_VALUE = "(cleared)";
+
+/** 标题栏按钮：只在有图时出现，避免占掉标题宽度。 */
+function imgAddButton(node) {
+  // v0.12.54：这条路默认关掉。官方工具条（ExtensionCommandButton）才是正路，
+  // 标题栏按钮挂在每帧绘制里，字段名一错就整屏刷异常（v0.12.52/53 的教训）。
+  if (!imgClearEnabled() || !node) return;
+  if (config.imageTitleButton !== true) return;
+  if (node.__wpsImgBtn) return;
+  const names = imgNamesOf(node);
+  if (!names.length) return;
+  node.__wpsImgBtn = true;
+  try {
+    node.addTitleButton({
+      name: "wps_clear_image",
+      /*
+       * v0.12.52 崩在这里：官方 LGraphButton 继承 LGraphBadge，字段名是
+       * text / fgColor / bgColor / onClick（不是 LiteGraph 老版的 title / fgcolor / callback），
+       * 而且 visible 是取值器 `this.text.length > 0` —— 不给非空 text，
+       * 每帧画标题都抛「Cannot read properties of undefined (reading 'length')」。
+       */
+      text: imgFilledWidgets(node, names).length > 0 ? IMG_BTN_ON : "",
+      fgColor: "#eaf3ee",
+      bgColor: "#3d6b57",
+      onClick: () => imgHandleClear(node),
+    });
+  } catch (error) {
+    if (!imgWarned) {
+      imgWarned = true;
+      console.warn(`[${EXTENSION_NAME}] 这个前端不支持标题栏按钮，清空图片不可用`, error);
+    }
+    node.__wpsImgBtn = false;
+  }
+}
+
+/**
+ * 点一下徽标要做的事。两条通路都可能触发（LiteGraph 的 badge.onClick、
+ * 官方前端派发的 litegraph:node-title-button-clicked），用时间戳去重，
+ * 保证连点一次只清一次。
+ */
+function imgHandleClear(node) {
+  if (!node) return [];
+  if (Date.now() - (node.__wpsImgLast || 0) < 250) return [];
+  node.__wpsImgLast = Date.now();
+  const saved = imgClearNode(node);
+  if (saved.length && !imgQuiet()) imgToast(node, saved, [node]);
+  try {
+    app?.graph?.setDirtyCanvas?.(true, true);
+  } catch {}
+  return saved;
+}
+
+/** 绑定官方标题栏按钮事件（画布是 EventTarget），只绑一次。 */
+function imgBindClick() {
+  const canvas = app?.canvas;
+  if (!canvas || typeof canvas.addEventListener !== "function") return;
+  if (canvas.__wpsImgListener) return;
+  canvas.__wpsImgListener = true;
+  canvas.addEventListener("litegraph:node-title-button-clicked", (event) => {
+    const button = event?.detail?.button;
+    if (button?.name !== "wps_clear_image") return;
+    imgHandleClear(event?.detail?.node);
+  });
+}
+
+/** 打开工作流时给已存在的节点补挂按钮。 */
+function imgScanAll() {
+  const nodes = app?.graph?._nodes || [];
+  for (const n of nodes) imgAddButton(n);
+  return nodes.length;
+}
+
+/** 快拍里刷新可见性：有图才显示按钮（几微秒级，不遍历 nodeData）。 */
+function imgSyncVisibility() {
+  if (!imgClearEnabled() || config.imageTitleButton !== true) return 0;
+  let shown = 0;
+  for (const n of app?.graph?._nodes || []) {
+    /*
+     * 一个节点出状况不许拖死整轮：v0.12.52 就是第一个节点抛异常，
+     * 后面所有节点都没轮到挂载（表现 = 按钮「没挂上」+ 控制台刷屏）。
+     */
+    try {
+      if (!n.__wpsImgBtn) imgAddButton(n);
+      const btn = (n.title_buttons || []).find((b) => b?.name === "wps_clear_image");
+      if (!btn) continue;
+      const want = imgFilledWidgets(n, imgNamesOf(n)).length > 0 ? IMG_BTN_ON : "";
+      // visible 是官方取值器（无 setter）：换 text 就是它的开关
+      if (btn.text !== want) btn.text = want;
+      if (want) shown++;
+    } catch {}
+  }
+  return shown;
+}
+
+/** 全图清扫（分享前用）：返回每个节点清掉了什么。 */
+function imgClearEverywhere() {
+  const report = [];
+  for (const n of app?.graph?._nodes || []) {
+    const saved = imgClearNode(n);
+    /*
+     * 用户 m03431：「全部清除时好像视图没有到的没有被清除」。缩略图是执行结果的
+     * 预览缓存，不在控件值里 —— 所以每个节点都要清一遍（画布 + Vue store 两条路）。
+     */
+    imgBustPreviews(n);
+    if (saved.length) report.push({ id: n.id, type: n.type, widgets: saved });
+  }
+  try {
+    app?.graph?.setDirtyCanvas?.(true, true);
+  } catch {}
+  if (report.length) imgMarkChanged();
+  return report;
+}
+
+/**
+ * v0.12.60：分享前清理（全部清除图片引用）+ 工具条按钮的悬浮说明。
+ *
+ * 用户 m03346：「还有全部清除在设置里面没有加入」+「鼠标放上去没有说明」。
+ *
+ * 清理覆盖四个藏图片引用的地方（都不碰硬盘文件，只改本工作流里的字符串）：
+ *   ① 画布节点的 image_upload 控件（含预览缓存）
+ *   ② 预设池里存的控件值快照（删掉节点也还在，1.6 MB 那块肥肉的成员）
+ *   ③ rgthree 对比器 widget 里的 images 列表
+ *   ④ 任何角落里的临时图引用（ImgSender_temp / rgthree.compare._temp）
+ */
+
+/** 悬浮说明注册状态（给 __wpsImgClear.tip() 读数用）。 */
+let imgTipState = "未注册";
+
+/** 看起来像图片文件名的字符串（不含 URL）。 */
+function imgLooksLikeImage(s) {
+  if (typeof s !== "string") return false;
+  const t = s.trim();
+  if (!t || t.length > 512 || t.startsWith("http") || t.startsWith("data:")) return false;
+  if (/^(ImgSender_temp|rgthree\.compare\._temp)/i.test(t)) return true;
+  return /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(t);
+}
+
+/** 迭代式深度走查：把对象树里所有「像图片文件名」的字符串交给 cb，返回替换个数。 */
+function imgWalkStrings(root, cb) {
+  let hits = 0;
+  const stack = [{ box: root, key: null }];
+  const seen = new WeakSet();
+  while (stack.length) {
+    const { box, key } = stack.pop();
+    if (!box || typeof box !== "object") continue;
+    if (seen.has(box)) continue;
+    seen.add(box);
+    for (const k of Object.keys(box)) {
+      const v = box[k];
+      if (typeof v === "string") {
+        if (imgLooksLikeImage(v)) {
+          const next = cb(v, k);
+          if (next !== v) {
+            box[k] = next;
+            hits++;
+          }
+        }
+      } else if (v && typeof v === "object") {
+        stack.push({ box: v, key: k });
+      }
+    }
+  }
+  void key;
+  return hits;
+}
+
+/** 预设池里的值是 JSON 字符串 → 解析后走查，再写回。 */
+function imgCleanPool(replaceTo) {
+  const store = ensureStore();
+  if (!store?.pool) return 0;
+  let hits = 0;
+  for (const key of Object.keys(store.pool)) {
+    const raw = store.pool[key];
+    if (typeof raw !== "string" || raw.startsWith(POOL_GZ_MARK)) continue;
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const n = imgWalkStrings(data, (v) => (replaceTo ? replaceTo : v));
+    if (n) {
+      store.pool[key] = JSON.stringify(data);
+      wpsPoolCache.set(key, store.pool[key]);
+      hits += n;
+    }
+  }
+  return hits;
+}
+
+/** rgthree 对比器：images 列表清空（它自己会显示「无图片」）。 */
+function imgCleanComparer(dryRun) {
+  const hit = [];
+  for (const n of app?.graph?._nodes || []) {
+    for (const w of n.widgets || []) {
+      const v = w?.value;
+      if (v && typeof v === "object" && Array.isArray(v.images) && v.images.length) {
+        hit.push({ id: n.id, type: n.type, name: w.name, count: v.images.length });
+        if (!dryRun) imgApplyValue(w, { ...v, images: [] });
+      }
+    }
+  }
+  return hit;
+}
+
+/** 扫一遍：分享前会清掉什么（只读，不动任何东西）。 */
+function imgScanShare() {
+  const canvas = [];
+  for (const n of app?.graph?._nodes || []) {
+    const filled = imgFilledWidgets(n, imgNamesOf(n));
+    if (filled.length) canvas.push({ id: n.id, type: n.type || "?", widgets: filled.map((w) => w.name) });
+  }
+  const comparer = imgCleanComparer(true);
+  let poolHits = 0;
+  const store = ensureStore();
+  if (store?.pool) {
+    for (const key of Object.keys(store.pool)) {
+      const raw = store.pool[key];
+      if (typeof raw !== "string" || raw.startsWith(POOL_GZ_MARK)) continue;
+      try {
+        poolHits += imgWalkStrings(JSON.parse(raw), (v) => v);
+      } catch {}
+    }
+  }
+  return { canvas, comparer, poolHits };
+}
+
+/** 真清：四处一起，返回汇总。 */
+function imgApplyShare() {
+  const canvas = imgClearEverywhere();
+  const comparer = imgCleanComparer(false);
+  const poolHits = imgCleanPool(IMG_CLEARED_VALUE);
+  if (canvas.length || comparer.length || poolHits) imgMarkChanged();
+  console.log(
+    `[${EXTENSION_NAME}] 分享前清理：画布 ${canvas.length} 个节点 / 对比器 ${comparer.length} 处 / 预设快照 ${poolHits} 条`,
+  );
+  return { canvas, comparer, poolHits };
+}
+
+/**
+ * 工具条按钮的悬浮说明：官方那一格读的是 i18n 键
+ * `commands.<camelCase(命令id)>.label`（实测源码 ExtensionCommandButton），
+ * 自定义命令没这个键 → 鼠标放上去什么都没有。这里把词条并进官方 i18n。
+ * 拿实例走 Vue 挂载点，不依赖任何哈希文件名，前端升级也不受影响。
+ */
+async function imgRegisterTooltip() {
+  try {
+    const host = document.getElementById("vue-app") ?? document.querySelector("[data-v-app]");
+    const vueApp = host?.__vue_app__;
+    const i18n = vueApp?.config?.globalProperties?.$i18n ?? vueApp?.config?.globalProperties?.$i18n?.global;
+    const g = i18n?.global ?? i18n;
+    if (!g?.mergeLocaleMessage) {
+      imgTipState = "没有 i18n 实例（不影响功能）";
+      return false;
+    }
+    const label = "清空图片 / Clear Image";
+    for (const loc of ["zh", "zh_CN", "zh-TW", "en"]) {
+      g.mergeLocaleMessage(loc, {
+        commands: {
+          xwideClearImage: { label },
+          XWIDE_ClearImage: { label },
+          xwide_clear_image: { label },
+        },
+      });
+    }
+    imgTipState = "已注册";
+    return true;
+  } catch (error) {
+    imgTipState = `失败：${error?.message || error}`;
+    return false;
+  }
+}
+
+globalThis.__wpsImgClear = {
+  /** 只读扫描：分享前会清掉什么 */
+  shareScan: () => imgScanShare(),
+  /** 四处一起清（不动硬盘） */
+  shareApply: () => imgApplyShare(),
+  /** 悬浮说明注册状态 */
+  tip() {
+    imgRegisterTooltip();
+    return imgTipState;
+  },
+  get enabled() {
+    return imgClearEnabled();
+  },
+  on() {
+    config.imageClear = true;
+    saveConfig();
+    imgScanAll();
+    console.log(`[${EXTENSION_NAME}] 清空图片已开启`);
+  },
+  off() {
+    config.imageClear = false;
+    saveConfig();
+    console.log(`[${EXTENSION_NAME}] 清空图片已关闭（刷新后标题栏按钮消失）`);
+  },
+  stats() {
+    let btns = 0;
+    let filled = 0;
+    for (const n of app?.graph?._nodes || []) {
+      if ((n.title_buttons || []).some((b) => b?.name === "wps_clear_image")) btns++;
+      if (imgFilledWidgets(n, imgNamesOf(n)).length) filled++;
+    }
+    return {
+      开关: imgClearEnabled(),
+      图像节点: btns,
+      有图引用: filled,
+      可撤销: imgUndo.size,
+      类型缓存: imgDefs.size,
+    };
+  },
+  /**
+   * 自证读数：把「这个节点为什么没有按钮」一次说清。
+   * 选中节点后跑 __wpsImgClear.probe()。
+   */
+  probe() {
+    let gsi = "无函数";
+    try {
+      const s = app?.canvas?.getSelectedItems?.();
+      if (s) gsi = s instanceof Set ? s.size : s.length;
+    } catch {
+      gsi = "抛异常";
+    }
+    const gs = app?.graph?.selection;
+    const st = imgPiniaStore();
+    const nodes = imgClickedNodes();
+    const n = nodes[0] ?? null;
+    const reg = LiteGraph?.registered_node_types?.[n?.type] ?? null;
+    return {
+      来源_getSelectedItems: gsi,
+      来源_graphSelection: !gs ? "无" : gs instanceof Set ? gs.size : gs.length,
+      预览pinia存储: st ? "有" : "无",
+      来源_canvasSelected: app?.canvas?.selected_item ? "有" : "无",
+      来源_工具条缓存: imgToolboxSeen.length,
+      工具条最近形状: imgToolboxLastShape(),
+      取到节点数: nodes.length,
+      类型: n ? n.type : "-",
+      图像控件: n ? imgNamesOf(n) : [],
+      注册表图像控件: imgUploadNames(reg?.nodeData ?? null),
+      有图引用: n ? imgFilledWidgets(n, imgNamesOf(n)).map((w) => w.name) : [],
+      预览store键: (() => {
+        const map = st?.$state?.nodePreviewImages ?? st?.nodePreviewImages;
+        return map ? Object.keys(map).length : "无";
+      })(),
+      setNodePreviewsByNodeId: typeof st?.setNodePreviewsByNodeId,
+      控件回调数: n ? (n.widgets || []).filter((w) => typeof w.callback === "function").length : 0,
+      开关: imgClearEnabled(),
+    };
+  },
+  /** 只清当前选中的那个图像节点。 */
+  clearSelected() {
+    const nodes = imgClickedNodes();
+    if (!nodes.length) return "先选中一个图像节点";
+    const saved = [];
+    for (const n of nodes) {
+      for (const name of imgClearNode(n)) saved.push(`#${n.id}:${name}`);
+    }
+    if (saved.length && !imgQuiet()) imgToast(nodes[0], saved);
+    return saved;
+  },
+  /** 清掉全图所有图像引用（分享前一键）。 */
+  clearAll: imgClearEverywhere,
+};
+
 app.registerExtension({
   name: EXTENSION_NAME,
+
+  // 图像节点：标题栏挂「清空图片」按钮（只对注册表里带 image_upload 的类型生效）
+  nodeCreated(node) {
+    try {
+      imgAddButton(node);
+    } catch (error) {
+      console.warn(`[${EXTENSION_NAME}] 清空图片挂载失败`, error);
+    }
+  },
 
   async configure() {
     wpsParkSelfCheckOnLoad();
     wpsPoolKickUnpack();
     slimRestore();
+    imgBindClick();
+    imgScanAll();
+    imgRegisterTooltip();
+  },
+
+  /*
+   * 官方「选中节点上方那一排工具条」（SelectionToolbox）的注册口。
+   *
+   * 实测源码 GraphView-C7jM5DM_.js：那一排的内容 =
+   *   invokeExtensions(`getSelectionToolboxCommands`, node) → commandService.getCommand(id)
+   * 而命令本身由 loadExtensionCommands 从 extension.commands 自动注册
+   * （registerCommand({...t, source: e.name})）。
+   * 所以这里给带 image_upload 的节点交出一条命令，按钮就长在那一排里。
+   */
+  commands: [
+    {
+      id: "xwideClearImage",
+      label: "清空图片 / Clear Image",
+      /*
+       * 图标必须用「CSS 里编译过的类」：官方 Tailwind 只把源码里出现过的
+       * 类名打进样式表，插件运行时新写的类名（如 lucide--eraser）没有样式，
+       * 那一格就渲染成空白。实测 CSS 里有 image-off，语义也正好。
+       */
+      icon: "icon-[lucide--image-off]",
+      tooltip: "清空这个节点上的图片引用 / Clear this node's image reference",
+      function: () => {
+        const nodes = imgClickedNodes();
+        if (!nodes.length) {
+          console.log(`[${EXTENSION_NAME}] 清空图片：没找到选中节点`);
+          imgToastNothing({ id: "?", title: "未选中" });
+          return;
+        }
+        let primary = null;
+        const savedAll = [];
+        const clearedNodes = [];
+        for (const n of nodes) {
+          const s = imgClearNode(n);
+          if (s.length) {
+            if (!primary) primary = n;
+            clearedNodes.push(n);
+            for (const name of s) savedAll.push(`#${n.id}:${name}`);
+          }
+        }
+        if (primary) {
+          if (!imgQuiet()) imgToast(primary, savedAll, clearedNodes);
+        } else {
+          imgToastNothing(nodes[0]);
+        }
+        try {
+          app?.graph?.setDirtyCanvas?.(true, true);
+        } catch {}
+      },
+    },
+  ],
+
+  getSelectionToolboxCommands(node) {
+    try {
+      // 顺手记下「这次工具条是为哪个节点建的」→ 点击时就知道清谁
+      imgNoteToolboxNode(node);
+      return imgClearEnabled() && imgNamesOf(node).length ? ["xwideClearImage"] : [];
+    } catch {
+      return [];
+    }
   },
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
